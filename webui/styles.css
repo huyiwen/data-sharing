@@ -1,0 +1,213 @@
+table {
+    margin: 0 auto;
+    border-collapse: collapse;
+}
+
+body {
+    margin: 0;
+    padding: 20px; /* Adds padding to the entire page */
+    font-family: Arial, sans-serif;
+}
+
+#servicesTable {
+    width: calc(100% - 40px); /* Adjusts the width accounting for padding */
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: auto;
+}
+
+#servicesTable th, #servicesTable td {
+    border-right: 1px solid #ddd; /* Lighter line for separation */
+    border-bottom: 1px solid #ddd;
+    padding: 11px;
+    text-align: left;
+}
+
+#servicesTable th:first-child, #servicesTable td:first-child {
+    border-left: 1px solid #ddd;
+}
+
+#servicesTable th {
+    background-color: #5c6bc0;
+    color: white;
+    padding-top: 20px;
+    padding-bottom: 20px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between; /* Aligns title and button on opposite ends */
+    align-items: center; /* Centers them vertically */
+    margin-bottom: 20px; /* Adds some space before the table */
+}
+
+.header .title {
+    margin-left: 20px; /* Aligns with the page's padding */
+}
+
+.header .add-button {
+    margin-right: 20px; /* Aligns with the page's padding */
+}
+
+
+.add-service-button {
+    background-color: #5c6bc0; /* A moderate blue */
+    align-self: center; /* Center the button in the grid */
+    position: relative;
+    right: 5%;
+    padding: 8px 12px;
+    color: #FFF;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    z-index: 10;  /* Ensure the button is above other elements */
+}
+
+h1.title {
+    position: relative;
+    left: 3%;
+}
+
+.add-service-button:hover {
+    background-color: #3949ab;
+}
+
+.modal {
+  display: none; /* Hidden by default */
+  position: fixed; /* Stay in place */
+  z-index: 1; /* Sit on top */
+  left: 0;
+  top: 0;
+  width: 100%; /* Full width */
+  height: 100%; /* Full height */
+  overflow: auto; /* Enable scroll if needed */
+  background-color: rgb(0,0,0); /* Fallback color */
+  background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+}
+
+.modal-content {
+  display: flex; /* Use flexbox to layout the content */
+  flex-direction: column; /* Stack the children vertically */
+  align-items: stretch; /* Stretch the children to fill the width */
+  background-color: #fefefe;
+  margin: 5% auto; /* 15% from the top and centered */
+  padding: 20px;
+  border: 1px solid #888;
+  width: 80%; /* Could be more or less, depending on screen size */
+  border-radius: 5px;
+  max-width: 600px;
+}
+
+
+.form-container {
+    margin: 20px; /* Add margin for spacing */
+    display: grid; /* Use grid layout for form elements */
+    grid-template-columns: 1fr 1fr; /* Two columns of equal width */
+    grid-gap: 20px; /* Space between the grid items */
+    align-items: center; /* Align grid items vertically */
+}
+
+.close, .close-btn {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    position: absolute;
+    right: 20px; /* Adjust as needed */
+    top: 20px; /* Adjust as needed */
+}
+
+
+.close:hover,
+.close:focus,
+.close-btn:hover,
+.close-btn:focus {
+  color: black;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid #ddd; /* Light grey border */
+}
+
+.data-table th, .data-table td {
+  text-align: left;
+  padding: 8px;
+}
+
+.data-table th {
+  background-color: #f2f2f2; /* Light grey background */
+  color: black;
+}
+
+.data-table tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.data-table tr:hover {
+  background-color: #f1f1f1;
+}
+
+
+/* .close-btn {
+    position: absolute;
+    right: 10px;
+    top: 5px;
+    cursor: pointer;
+} */
+
+.button-style {
+    background-color: #5c6bc0; /* A moderate blue */
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    transition-duration: 0.4s;
+    cursor: pointer;
+    border-radius: 4px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.button-style:hover {
+    background-color: #3949ab; /* A darker shade of blue for hover effect */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.button-disabled {
+    background-color: #9fa8da; /* A lighter blue to indicate a disabled state */
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin: 4px 2px;
+    border-radius: 4px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    cursor: not-allowed; /* Indicates no action can be taken */
+    text-transform: none; /* Keeps the text in normal casing */
+}
+
+/* General style for input fields */
+input[type="text"], input[type="url"], textarea {
+    width: 100%; /* Full width */
+    padding: 10px; /* Comfortable padding inside inputs */
+    margin: 5px 0 20px 0; /* Space between inputs */
+    display: inline-block;
+    border: 1px solid #ccc; /* Subtle border */
+    border-radius: 4px; /* Rounded corners */
+    box-sizing: border-box; /* Box sizing property */
+}
+
+/* Placeholder style */
+input::placeholder, textarea::placeholder {
+    color: #a9a9a9; /* Placeholder text color */
+}
