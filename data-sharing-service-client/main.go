@@ -11,39 +11,10 @@ import (
 	"path"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"net/http"
-
-	"github.com/hyperledger/fabric-gateway/pkg/client"
-	"github.com/hyperledger/fabric-gateway/pkg/identity"
-	"github.com/hyperledger/fabric-protos-go-apiv2/gateway"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
-
-const (
-	mspID        = "Org1MSP"
-	cryptoPath   = "../../test-network/organizations/peerOrganizations/org1.example.com"
-	certPath     = cryptoPath + "/users/User1@org1.example.com/msp/signcerts/cert.pem"
-	keyPath      = cryptoPath + "/users/User1@org1.example.com/msp/keystore/"
-	tlsCertPath  = cryptoPath + "/peers/peer0.org1.example.com/tls/ca.crt"
-	peerEndpoint = "localhost:7051"
-	gatewayPeer  = "peer0.org1.example.com"
-)
-
-type Service struct {
-	ServiceName      string            `json:"serviceName"`
-	ServiceID        string            `json:"serviceID"`
-	SellerURL        string            `json:"sellerURL"`
-	SellerPublicKey  string            `json:"sellerPublicKey"`
-	Comment          string            `json:"comment"`
-	SellerHeaders    map[string]string `json:"sellerHeaders"`
-	TransactionHash  string            `json:"transactionHash"`
-}
-
-var now = time.Now() //得到当前时间
-var assetId = fmt.Sprintf("asset%d", now.Unix()*1e3+int64(now.Nanosecond())/1e6)
 
 func main() {
 	clientConnection := newGrpcConnection() //建立一个新的grpc连接
@@ -184,77 +155,6 @@ func main() {
 	app.Run(":5000")
 }
 
-// newGrpcConnection creates a gRPC connection to the Gateway server.
-// 建立一个新的grpc连接到gateway服务端
-func newGrpcConnection() *grpc.ClientConn {
-	certificate, err := loadCertificate(tlsCertPath) //根据常量来下载一个证书
-	if err != nil {
-		panic(err)
-	}
-
-	certPool := x509.NewCertPool()                                                  //证书池？
-	certPool.AddCert(certificate)                                                   //添加证书
-	transportCredentials := credentials.NewClientTLSFromCert(certPool, gatewayPeer) //运输证书，调用golang的包，(感觉弄一个证书池有些不明白)
-
-	connection, err := grpc.Dial(peerEndpoint, grpc.WithTransportCredentials(transportCredentials)) //开启连接
-	if err != nil {
-		panic(fmt.Errorf("failed to create gRPC connection: %w", err))
-	}
-
-	return connection
-}
-
-// newIdentity creates a client identity for this Gateway connection using an X.509 certificate.
-// newIdentity 使用 X.509 证书为网关连接创建客户端身份。
-func newIdentity() *identity.X509Identity { //得到新的id
-	certificate, err := loadCertificate(certPath) //定义一个证书
-	if err != nil {
-		panic(err)
-	}
-
-	id, err := identity.NewX509Identity(mspID, certificate) //根据刚刚新创立的证书调用函数得到id
-	if err != nil {
-		panic(err)
-	}
-
-	return id
-}
-
-// 下载证书，以x509.certificate的格式存储
-func loadCertificate(filename string) (*x509.Certificate, error) {
-	certificatePEM, err := os.ReadFile(filename) //读取文件里面的内容
-	if err != nil {
-		return nil, fmt.Errorf("failed to read certificate file: %w", err)
-	}
-	return identity.CertificateFromPEM(certificatePEM) //应该是一一个解析函数，将证书里面的内容存储到x509.certificate里面
-}
-
-// newSign creates a function that generates a digital signature from a message digest using a private key.
-// newSign 创建一个函数，使用私钥从信息摘要生成数字签名。
-func newSign() identity.Sign {
-	files, err := os.ReadDir(keyPath) //读取目录
-	if err != nil {
-		panic(fmt.Errorf("failed to read private key directory: %w", err))
-	}
-	privateKeyPEM, err := os.ReadFile(path.Join(keyPath, files[0].Name())) //得到私钥pem格式
-
-	if err != nil {
-		panic(fmt.Errorf("failed to read private key file: %w", err))
-	}
-
-	privateKey, err := identity.PrivateKeyFromPEM(privateKeyPEM) //根据pem得到私钥
-	if err != nil {
-		panic(err)
-	}
-
-	sign, err := identity.NewPrivateKeySign(privateKey) //根据私钥得到数字签名
-	if err != nil {
-		panic(err)
-	}
-
-	return sign
-}
-
 // This type of transaction would typically only be run once by an application the first time it was started after its
 // initial deployment. A new version of the chaincode deployed later would likely not need to run an "init" function.
 // 这种类型的事务通常只在应用程序首次启动后运行一次。运行一次。之后部署的新版本 chaincode 可能不需要运行 "init "函数。
@@ -388,3 +288,4 @@ func formatJSON(data []byte) string {
 	}
 	return prettyJSON.String()
 }
+

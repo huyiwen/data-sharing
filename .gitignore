@@ -1,2 +1,4 @@
 archive/
 __pycache__/
+*.swp
+vendor/
