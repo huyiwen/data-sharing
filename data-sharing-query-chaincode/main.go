@@ -1,95 +1,139 @@
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package main
 
 import (
-        "log"
-        "encoding/json"
+	"encoding/json"
+	"fmt"
+	"log"
 
-        "github.com/hyperledger/fabric-contract-api-go/contractapi"
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// SmartContract provides functions for managing an Asset
-type SmartContract struct {
-        contractapi.Contract
+// QuerySmartContract provides functions for managing an Query
+type QuerySmartContract struct {
+	contractapi.Contract
 }
 
-// Asset describes basic details of what makes up a simple asset
+// Query describes basic details of what makes up a simple query
 // Insert struct field in alphabetic order => to achieve determinism across languages
 // golang keeps the order when marshal to json but doesn't order automatically
 type Query struct {
-        DataDigest     string `json:"DataDigest"`
-        DataRows       int    `json:"DatatRows"`
-        InitiatorID    string `json:"InitiatorID"`
-        InitiatorMSPID string `json:"InitiatorMSPID"`
-        Legitimacy     bool   `json:"Legitimacy"`
-        QueriedTable   string `json:"QueriedTable"`
-        QueryDigest    string `json:"QueryDigest"`
-        QueryID        string `json:"QueryID"`
-        ServiceID      string `json:"ServiceID"`
-        Timestamp      int    `json:"Timestamp"`
+	Certificate    string `json:"Certificate"`
+	DataDigest     string `json:"DataDigest"`
+	DataRows       int    `json:"DatatRows"`
+	InitiatorID    string `json:"InitiatorID"`
+	InitiatorMSPID string `json:"InitiatorMSPID"`
+	Legitimacy     string `json:"Legitimacy"`
+	QueriedTable   string `json:"QueriedTable"`
+	QueryDigest    string `json:"QueryDigest"`
+	QueryID        string `json:"QueryID"`
+	ServiceID      string `json:"ServiceID"`
+	Timestamp      int    `json:"Timestamp"`
 }
 
-// InitLedger adds a base set of assets to the ledger
-func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
-        return nil
+// InitLedger adds a base set of querys to the ledger
+func (s *QuerySmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
+	return nil
 }
 
-// CreateAsset issues a new asset to the world state with given details.
-func (s *SmartContract) PutQuery(ctx contractapi.TransactionContextInterface, id string, dataDigest string, dataRows int, initiatorID string, initiatorMSPID string, legitimacy bool, queriedTable string, queryStatement string, serviceID string, timestamp int) error {
-        query := Query{
-                DataDigest: dataDigest,
-                DataRows: dataRows,
-                InitiatorID: initiatorID,
-                InitiatorMSPID: initiatorMSPID,
-                Legitimacy: legitimacy,
-                QueriedTable: queriedTable,
-                QueryStatement: queryStatement,
-                QueryID: id,
-                ServiceID: serviceID,
-                Timestamp: timestamp,
-        }
-        queryJSON, err := json.Marshal(query)
-        if err != nil {
-                return err
-        }
+// CreateQuery issues a new query to the world state with given details.
+func (s *QuerySmartContract) CreateQuery(ctx contractapi.TransactionContextInterface, certificate, dataDigest string, dataRows int, initiatorID, initiatorMSPID, legitimacy, queriedTable, queryDigest, queryID, serviceID string, timestamp int) error {
+	exists, err := s.QueryExists(ctx, queryID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("the query %s already exists", queryID)
+	}
 
-        return ctx.GetStub().PutState(id, queryJSON)
+	query := Query{
+		Certificate:    certificate,
+		DataDigest:     dataDigest,
+		DataRows:       dataRows,
+		InitiatorID:    initiatorID,
+		InitiatorMSPID: initiatorMSPID,
+		Legitimacy:     legitimacy,
+		QueriedTable:   queriedTable,
+		QueryDigest:    queryDigest,
+		QueryID:        queryID,
+		ServiceID:      serviceID,
+		Timestamp:      timestamp,
+	}
+	queryJSON, err := json.Marshal(query)
+	if err != nil {
+		return err
+	}
+
+	return ctx.GetStub().PutState(queryID, queryJSON)
 }
 
-// GetAllAssets returns all assets found in world state
-func (s *SmartContract) GetAllQueries(ctx contractapi.TransactionContextInterface) ([]*Query, error) {
-        // range query with empty string for startKey and endKey does an
-        // open-ended query of all assets in the chaincode namespace.
-        resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
-        if err != nil {
-                return nil, err
-        }
-        defer resultsIterator.Close()
+// ReadQuery returns the query stored in the world state with given id.
+func (s *QuerySmartContract) ReadQuery(ctx contractapi.TransactionContextInterface, queryID string) (*Query, error) {
+	queryJSON, err := ctx.GetStub().GetState(queryID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from world state: %v", err)
+	}
+	if queryJSON == nil {
+		return nil, fmt.Errorf("the query %s does not exist", queryID)
+	}
 
-        var queries []*Query
+	var query Query
+	err = json.Unmarshal(queryJSON, &query)
+	if err != nil {
+		return nil, err
+	}
+
+	return &query, nil
+}
+
+// QueryExists returns true when query with given ID exists in world state
+func (s *QuerySmartContract) QueryExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
+	queryJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return false, fmt.Errorf("failed to read from world state: %v", err)
+	}
+
+	return queryJSON != nil, nil
+}
+
+// GetAllQuerys returns all querys found in world state
+func (s *QuerySmartContract) GetAllQuerys(ctx contractapi.TransactionContextInterface) ([]*Query, error) {
+	// range query with empty string for startKey and endKey does an
+	// open-ended query of all querys in the chaincode namespace.
+	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
+
+	var querys []*Query
 	for resultsIterator.HasNext() {
-                queryResponse, err := resultsIterator.Next()
-                if err != nil {
-                        return nil, err
-                }
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
 
-                var query Query
-                err = json.Unmarshal(queryResponse.Value, &query)
-                if err != nil {
-                        return nil, err
-                }
-                queries = append(queries, &query)
-        }
+		var query Query
+		err = json.Unmarshal(queryResponse.Value, &query)
+		if err != nil {
+			return nil, err
+		}
+		querys = append(querys, &query)
+	}
 
-        return queries, nil
+	return querys, nil
 }
 
 func main() {
-        assetChaincode, err := contractapi.NewChaincode(&SmartContract{})
-        if err != nil {
-                log.Panicf("Error creating data-transfer chaincode: %v", err)
-        }
+	queryChaincode, err := contractapi.NewChaincode(&QuerySmartContract{})
+	if err != nil {
+		log.Panicf("Error creating data-service-querying chaincode: %v", err)
+	}
 
-        if err := assetChaincode.Start(); err != nil {
-                log.Panicf("Error starting data-transfer chaincode: %v", err)
-        }
+	if err := queryChaincode.Start(); err != nil {
+		log.Panicf("Error starting data-service-querying chaincode: %v", err)
+	}
 }

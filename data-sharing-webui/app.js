@@ -1,10 +1,10 @@
-BASE_URL = "http://127.0.0.1:5000";
+// BASE_URL = "http://localhost:5000";// defined in index.html with variable port
 
 document.addEventListener("DOMContentLoaded", function () {
   // 使用XMLHttpRequest来进行POST请求
   var xhr = new XMLHttpRequest();
   // xhr.open('POST', '/get_services', true);
-  xhr.open("POST", BASE_URL + "/get_services", true);
+  xhr.open("GET", BASE_URL + "/get_services", true);
   xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
 
   // 当接收到响应时的操作
@@ -26,41 +26,70 @@ document.addEventListener("DOMContentLoaded", function () {
 
 function addServiceRow(service, tableBody) {
   const row = tableBody.insertRow();
-
-  const publicKey = service.sellerPublicKey;
+  console.log("addServiceRow:",service)
+  const publicKey = service.PublisherPublicKey;
   const trimmedKey =
     publicKey.substring(0, 5) +
     "..." +
     publicKey.substring(publicKey.length - 5);
 
   const rows = [
-    "serviceName",
-    "serviceID",
-    "sellerURL",
-    "sellerPublicKey",
-    "comment",
-    "transactionHash",
-    "application",
-    "data",
+    "ServiceName",
+    "ServiceID",
+    "PublisherURL",
+    "PublisherPublicKey",
+    "Comment",
+    "TransactionHash",
+    "Application",
+    "Data",
   ];
 
-  row.insertCell(rows.indexOf("serviceName")).textContent = service.serviceName;
-  row.insertCell(rows.indexOf("serviceID")).textContent = service.serviceID;
-  row.insertCell(rows.indexOf("sellerURL")).textContent = service.sellerURL;
-  row.insertCell(rows.indexOf("sellerPublicKey")).textContent = trimmedKey;
-  row.insertCell(rows.indexOf("comment")).textContent = service.comment;
-  row.insertCell(rows.indexOf("transactionHash")).textContent =
-    service.transactionHash ? service.transactionHash : "Pending";
+  row.insertCell(rows.indexOf("ServiceName")).textContent = service.ServiceName;
+  row.insertCell(rows.indexOf("ServiceID")).textContent = service.ServiceID;
+  row.insertCell(rows.indexOf("PublisherURL")).textContent = service.PublisherURL;
+  row.insertCell(rows.indexOf("PublisherPublicKey")).textContent = trimmedKey;
+  row.insertCell(rows.indexOf("Comment")).textContent = service.Comment;
+  row.insertCell(rows.indexOf("TransactionHash")).textContent =
+    service.TransactionHash ? service.TransactionHash : "Pending";
 
   // 添加approve按钮
   const approveBtn = document.createElement("button");
   approveBtn.className = "button-style";
-  approveBtn.textContent = "Approve";
-  approveBtn.setAttribute("data-service-id", service.serviceID);
+  approveBtn.textContent = "Apply";
+  approveBtn.setAttribute("data-service-id", service.ServiceID);
   approveBtn.onclick = function () {
-    approve(service.serviceID);
+  // 获取当前行的所有单元格
+  const cells = row.cells;
+
+  // 构造一个对象,包含当前行的所有数据
+  const rowData = {
+    ServiceName: cells[rows.indexOf("ServiceName")].textContent,
+    ServiceID: cells[rows.indexOf("ServiceID")].textContent,
+    PublisherURL: cells[rows.indexOf("PublisherURL")].textContent,
+    PublisherPublicKey: cells[rows.indexOf("PublisherPublicKey")].textContent,
+    Comment: cells[rows.indexOf("Comment")].textContent,
+    TransactionHash: cells[rows.indexOf("TransactionHash")].textContent,
   };
-  row.insertCell(rows.indexOf("application")).appendChild(approveBtn);
+
+  // 发送 POST 请求到 /forward_application 接口
+  fetch("/forward_application", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(rowData),
+  })
+    .then((response) => {
+        if (response.ok) {
+            console.log("Forward Application successfully");
+        } else {
+            console.error("Failed to approve application");
+        }
+    })
+    .then((data) => console.log(data))
+    .catch((error) => console.error("error:", error));
+};
+  row.insertCell(rows.indexOf("Application")).appendChild(approveBtn);
 
   // 切换 approve button
   if (service.approved) {
@@ -75,7 +104,7 @@ function addServiceRow(service, tableBody) {
   viewBtn.textContent = "View";
   viewBtn.className = "button-style";
   viewBtn.onclick = function () {
-    fetchData(service.serviceID); // This assumes headers are part of the service object
+    fetchData(service.ServiceID); // This assumes headers are part of the service object
   };
   row.insertCell(rows.indexOf("data")).appendChild(viewBtn);
 }
@@ -314,11 +343,11 @@ addServiceForm.addEventListener("submit", async function (event) {
 });
 
 // Assuming your modal has an overlay with the ID 'modal-overlay'
-var modalOverlay = document.getElementById("modal-overlay");
-var dataModal = document.getElementById("data-modal"); // The ID of your "View Data" modal
+// var modalOverlay = document.getElementById("modal-overlay");
+// var dataModal = document.getElementById("data-modal"); // The ID of your "View Data" modal
 
-modalOverlay.addEventListener("click", function (event) {
-  if (event.target == modalOverlay) {
-    dataModal.style.display = "none";
-  }
-});
+// modalOverlay.addEventListener("click", function (event) {
+//   if (event.target == modalOverlay) {
+//     dataModal.style.display = "none";
+//   }
+// });

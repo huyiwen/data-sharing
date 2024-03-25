@@ -11,6 +11,8 @@ import (
 	"path"
 	"time"
 
+	"database/sql"
+	 _ "github.com/go-sql-driver/mysql" //导入包但不使用，init()
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
@@ -98,10 +100,6 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"services": services})
 	})
 
-	app.POST("/send_application",func(c *gin.Context){
-
-	})
-
 	app.POST("/approve_application", func(c *gin.Context) {
 		var data map[string]interface{}
 		if err := c.ShouldBindJSON(&data); err != nil {
@@ -125,7 +123,8 @@ func main() {
 
 		c.JSON(http.StatusOK, gin.H{"serviceID": "ID005", "transactionHash": "0x123468q235"})
 	})
-
+	//接收的数据：
+	//headers 
 	app.POST("/fetch_data", func(c *gin.Context) {
 		var data map[string]interface{}
 		if err := c.ShouldBindJSON(&data); err != nil {
@@ -133,14 +132,118 @@ func main() {
 			return
 		}
 
-		// Process data...
+		headers := data["headers"]
+		serviceID := data["serviceID"]
+		res,err := http.POST(service["sellerurl"]+"/get_services","application/json",nil)//待完善
+		if err != nil {
+			panic(err)
+		}
+		services, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			fmt.Println("Fatal error ", err.Error())
+			panic(err)
+		}
+
+		var service Service
+		for i range in services {
+			if i["serviceid"]==serviceID{
+				service = i
+				break
+			}
+		}
+		currenttime := time.Now()
+		payload := make(map[string]interface{}){
+			"headers" : headers,
+			"currentTime" : currenttime,
+		}
+		sendData,_ := json.Marshal(content)
+		res, err := http.Post(service["sellerurl"]+"/request_data",
+		"application/json", bytes.NewBuffer([]byte(sendData)))
 
 		c.JSON(http.StatusOK, gin.H{
-			"data":         [][]int{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}},
-			"column_names": []string{"column1", "column2", "column3"},
+			//"data":         ,
+			"column_names": headers,
 		})
 	})
 
+	app.POST("/forward_application",func(c *gin.Context){
+		var data map[string]interface{}
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		serviceID := data["serviceID"]
+		res,err := http.POST(service["sellerurl"]+"/get_services","application/json",nil)//待完善
+		if err != nil {
+			panic(err)
+		}
+		services, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			fmt.Println("Fatal error ", err.Error())
+			panic(err)
+		}
+
+		var service Service
+		for i range in services {
+			if i["serviceid"]==serviceID{
+				service = i
+				break
+			}
+		}
+		content := make(map[string]interface{}){
+			"buyerId" : service["buyerID"],
+			"buyerPublicKey" : service["buyerPublicKey"],
+			"applicationTime" : service["applicationTime"],
+			"nounce" : service["nounce"],
+		}
+		sign := ourSign(getPrivateKey(),[]byte(content))
+		content["sign"]=string(sign)
+		sendData,_ := json.Marshal(content)
+		res, err := http.Post(service["sellerurl"]+"/send_application",
+		"application/json", bytes.NewBuffer([]byte(sendData)))
+
+		if err != nil {
+			fmt.Println("Fatal error ", err.Error())
+		}else{
+			c.JSON(200,gin.H{
+				"applicationID",ioutil.ReadAll(res.Body),
+			})
+		}
+	})
+	
+	app.POST("/receive_message",func(c *gin.Context){
+		var data map[string]interface{}
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		sellerurl:=data["sellerurl"]
+		message:=data["message"]
+		sign:=ourSign(getPrivateKey(),message)
+		content:=make(map[string]interface){
+			"message":message,
+			"sign":sign,
+		}
+		sendData,_:=json.Marshal(content)
+		res, err := http.Post(service["sellerurl"]+"/receive_sign",
+		"application/json", bytes.NewBuffer([]byte(sendData)))
+		//返回值
+		c.JSON(200,gin.H{"sign": sign})
+	})
+
+	app.POST("/receive_applicationAnswer",func(c *gin.Context){
+		var data map[string]interface{}
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK,gin.H{
+			"serviceID" : data["ServiceID"],
+			"initiatorID" : data["InitiatorID"],
+			"legitimacy" : data[legitimacy],
+		})
+	})
+	
 	app.GET("/app.js", func(c *gin.Context) {
 		c.File("../app.js")
 	})
@@ -289,3 +392,87 @@ func formatJSON(data []byte) string {
 	return prettyJSON.String()
 }
 
+//获取私钥
+func getPrivateKey() crypto.privateKey{
+	files, err := os.ReadDir(keyPath) //读取目录
+	if err != nil {
+		panic(fmt.Errorf("failed to read private key directory: %w", err))
+		return nil
+	}
+	privateKeyPEM, err := os.ReadFile(path.Join(keyPath, files[0].Name())) //得到私钥pem格式
+
+	if err != nil {
+		panic(fmt.Errorf("failed to read private key file: %w", err))
+		return nil
+	}
+
+	privateKey, err := identity.PrivateKeyFromPEM(privateKeyPEM) //根据pem得到私钥
+	if err != nil {
+		panic(err)
+		return nil
+	}
+	return privateKey
+}
+
+// newSign creates a function that generates a digital signature from a message digest using a private key.
+// newSign 创建一个函数，使用私钥从信息摘要生成数字签名.
+func newSign() identity.Sign {
+	privatekey := getPrivateKey()
+	if privatekey == nil(
+		return nil
+	)
+
+	sign, err := identity.NewPrivateKeySign(privateKey) //根据私钥得到数字签名
+	if err != nil {
+		panic(err)
+	}
+
+	return sign
+}
+func ourSign(privateKey ed25519.PrivateKey, message []byte) Sign {
+		signature := ed25519.Sign(privateKey, message)
+		return signature, nil
+}
+func dataBase(usrname string, passwd string, id string, databaseName string, tableName string) []map[interface]string{
+	dsn := usrname+passwd+id+databaseName
+	db,err := sql.Open("mysql",dsn)
+	if err != nil {
+		fmt.Printf("dsn:%s invalid,err:%v\n", dsn, err)
+		return nil
+	}
+	defer db.Close()
+	err = db.Ping() //尝试连接数据库
+	if err != nil {
+		fmt.Printf("open %s faild,err:%v\n", dsn, err)
+		return nil
+	}
+	sqlStr := "select * from ? ;"
+	rows,err := db.Query(sqlStr,tableName);
+	if err != nil {
+        fmt.Println(err)
+    }
+    // defer close result set
+    defer rows.Close()
+
+   if len(cols) > 0 {
+      var ret []map[string]string
+      for rows.Next() {
+         buff := make([]interface{}, len(cols))
+         data := make([][]byte, len(cols)) //数据库中的NULL值可以扫描到字节中
+         for i, _ := range buff {
+            buff[i] = &data[i]
+         }
+         rows.Scan(buff...) //扫描到buff接口中，实际是字符串类型data中
+         //将每一行数据存放到数组中
+         dataKv := make(map[string]string, len(cols))
+         for k, col := range data { //k是index，col是对应的值
+            //fmt.Printf("%30s:\t%s\n", cols[k], col)
+            dataKv[cols[k]] = string(col)
+         }
+         ret = append(ret, dataKv)
+      }
+      return ret
+   } else {
+      return nil
+   }
+}

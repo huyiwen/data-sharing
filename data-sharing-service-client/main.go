@@ -2,25 +2,173 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"crypto/x509"
+	_ "context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
-	"errors"
+	_ "errors"
 	"fmt"
+	"io/ioutil"
+	"math/big"
+	"net"
+	"net/http"
 	"os"
-	"path"
+	"strings"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/status"
+	"github.com/gin-gonic/gin"
+	_ "github.com/google/uuid"
+	"github.com/hyperledger/fabric-gateway/pkg/client"
+	_ "github.com/hyperledger/fabric-gateway/pkg/identity"
+	_ "github.com/hyperledger/fabric-protos-go-apiv2/gateway"
+	_ "google.golang.org/grpc"
+	_ "google.golang.org/grpc/credentials"
+	_ "google.golang.org/grpc/status"
+
+	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
+const (
+	channelName = "mychannel"
+)
+
+var (
+	mspID        string
+	cryptoPath   string
+	certPath     string
+	keyPath      string
+	tlsCertPath  string
+	peerEndpoint string
+	gatewayPeer  string
+)
+
+type Service struct {
+	ServiceName        string            `json:"ServiceName"`
+	ServiceID          string            `json:"ServiceID"`
+	PublisherURL       string            `json:"PublisherURL"`
+	PublisherPublicKey string            `json:"PublisherPublicKey"`
+	Comment            string            `json:"Comment"`
+	ServiceHeaders     map[string]string `json:"ServiceHeaders"`
+	TransactionHash    string            `json:"TransactionHash"`
+}
+
+type ServiceInfo struct {
+	ServiceID     string `json:"ServiceID"`
+	ServiceIP     string `json:"ServiceIP"`
+	ServicePort   string `json:"ServicePort"`
+	ServiceUser   string `json:"ServiceUser"`
+	ServicePasswd string `json:"ServicePasswd"`
+	ServiceDb     string `json:"ServiceDb"`
+	ServiceTable  string `json:"ServiceTable"`
+}
+
+type Query struct {
+	DataDigest     string `json:"DataDigest"`
+	DataRows       int    `json:"DataRows"`
+	InitiatorID    string `json:"InitiatorID"`
+	InitiatorMSPID string `json:"InitiatorMSPID"`
+	Legitimacy     bool   `json:"Legitimacy"`
+	QueriedTable   string `json:"QueriedTable"`
+	QueryDigest    string `json:"QueryDigest"`
+	QueryID        string `json:"QueryID"`
+	ServiceID      string `json:"ServiceID"`
+	Timestamp      int    `json:"Timestamp"`
+}
+
+type ApplicationAnswer struct {
+	InitiatorID  string `json:"InitiatorID"`
+	InitiatorURL string `json:"InitiatorURL"`
+	ServiceID    string `json:"ServiceID"`
+	ServiceName  string `json:"ServiceName"`
+	PublisherURL string `json:"PublisherURL"`
+	// TODO
+	ApplicationTime string `json:"ApplicationTime"`
+	ProcessTime     string `json:"ProcessTime"`
+	Status          int    `json:Status"` // 0-pending 1-approved 2-rejected
+}
+
+type Application struct {
+	InitiatorURL       string           `json:"InitiatorURL"`
+	InitiatorPublicKey *ecdsa.PublicKey `json:"InitiatorPublicKey"`
+	InitiatorID        string           `json:"InitiatorID"`
+	ServiceID          string           `json:"ServiceID"`
+	ServiceName        string           `json:"ServiceName"`
+	ApplicationTime    string           `json:"ApplicationTime"`
+	Status             int              `json:"Status"`
+}
+
+// 定义 p256Curve 类型
+type p256Curve struct {
+	elliptic.CurveParams
+}
+type ResponseData struct {
+	Data map[string]interface{} `json:"data"`
+}
+
+func init() {
+	// 获取 P-256 曲线参数
+	p256Params := elliptic.P256().Params()
+
+	// 创建 p256Curve 实例
+	p256Curve := p256Curve{*p256Params}
+
+	// 注册 p256Curve 类型
+	gob.Register(p256Curve)
+}
+
+var MyID string
+var MyIP string
+var MyURL string
+var port string
+
 func main() {
-	clientConnection := newGrpcConnection() //建立一个新的grpc连接
+	// 从命令行读入端口
+	if len(os.Args) < 2 {
+		fmt.Println("Please provide a port number.")
+		return
+	}
+	port = os.Args[1]
+	fmt.Println("Port:", port)
+	MyID = "User" + port
+	MyIP, _ = getOuterIP()
+	MyURL = "http://" + MyIP + ":" + port
+
+	// 渲染页面
+	app := gin.Default()
+	app.LoadHTMLGlob("../data-sharing-webui/templates/*")
+
+	type ViewData struct {
+		Port string
+	}
+
+	app.GET("/login", func(c *gin.Context) {
+		c.HTML(200, "login.html", nil)
+	})
+
+	app.GET("/", func(c *gin.Context) {
+		data := ViewData{Port: port}
+		c.HTML(200, "index.html", data)
+	})
+
+	fmt.Println("============= CONNECTING start =============")
+
+	setConnParams(port)
+
+	// connect to fabric
+	clientConnection := newGrpcConnection()
 	defer clientConnection.Close()
-	id := newIdentity() //得到一个新的id
-	sign := newSign()   //得到一个新的标记
+	fmt.Println("======= Grpc Connection Established ========")
+
+	id, MyPubKey := newIdentity() //得到一个新的id
+	sign, signer := newSign()     //得到一个新的标记
+	//	fmt.Println("cert: ", id)
 
 	gw, err := client.Connect( //新建一个客户端连接并且进行初始化
 		id,
@@ -38,92 +186,508 @@ func main() {
 	defer gw.Close() //关闭gateway
 
 	// Override default values for chaincode and channel name as they may differ in testing contexts.
-	chaincodeName := "basic" //初始化名字
-	if ccname := os.Getenv("CHAINCODE_NAME"); ccname != "" {
-		chaincodeName = ccname
-	} //如果ccname不等于“”，则将ccname赋值给chaincodename，
+	// chaincodeName := "basic" //初始化名字
+	// if ccname := os.Getenv("CHAINCODE_NAME"); ccname != "" {
+	// 	chaincodeName = ccname
+	// } //如果ccname不等于“”，则将ccname赋值给chaincodename，
 
 	//同上
-	network := gw.GetNetwork(channelName)          //根据取得的channelName，调用GW的函数得到network,
-	contract := network.GetContract(chaincodeName) //得到contract
+	fmt.Println("============= Getting Contract =============")
+	network := gw.GetNetwork("mychannel") //根据取得的channelName，调用GW的函数得到network,
+	serviceChaincode := "ds_service"
+	queryChaincode := "ds_query"
+	serviceContract := network.GetContract(serviceChaincode) //得到contract
+	queryContract := network.GetContract(queryChaincode)
+	fmt.Println(serviceContract, queryContract)
 
-	app := gin.Default()
+	var applicationToMe []Application
+	var myApplication []ApplicationAnswer
+	var myService []ServiceInfo
 
-	app.LoadHTMLGlob("templates/*.html")
-
-	app.GET("/", func(c *gin.Context) {
-		c.HTML(200,"index.html",nil)
+	app.GET("/applicationToMe", func(c *gin.Context) {
+		c.HTML(200, "applicationToMe.html", gin.H{
+			"Port":         port,
+			"applications": applicationToMe,
+		})
 	})
 
-	app.POST("/get_services", func(c *gin.Context) {
+	app.GET("/myApplication", func(c *gin.Context) {
+		// data := ViewData{Port: port}
+		c.HTML(200, "myapplication.html", gin.H{
+			"Port":         port,
+			"applications": myApplication,
+		})
+	})
+
+	// PUBLISHER
+	// app.POST("/put_service", func(c *gin.Context) {
+	// 	// 1. 接受前端传来的new_service
+	// 	var new_service map[string]interface{}
+	// 	if err := c.ShouldBindJSON(&new_service); err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	// 		return
+	// 	}
+	// 	// 2. 生成唯一的ServiceID
+	// 	serviceID := uuid.New().String()
+	// 	new_service["ServiceID"] = serviceID
+	// 	new_service["PublisherURL"] = MyIP + ":" + string(port)
+	// 	new_service["PublisherCertificate"] = id
+	// 	fmt.Println("put_service generates new_service:",new_service)
+
+	// 	// 3. 调用链码CreateAsset
+	// 	response, err := serviceContract.SubmitTransaction("CreateService", new_service["ServiceName"], new_service["PublisherURL"], new_service["PublisherPublicKey"], new_service["Comment"])
+	// 	if err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{
+	// 			"transactionHash": nil,
+	// 			"serviceID":       nil,
+	// 			"error_msg":       fmt.Sprintf("Failed to submit transaction: %v", err),
+	// 		})
+	// 		return
+	// 	}
+	// 	c.JSON(http.StatusOK, gin.H{
+	// 		"transactionHash": response.TransactionID,
+	// 		"serviceID":       serviceID,
+	// 		"error_msg":       "None",
+	// 	})
+
+	// 	_, commit, err := serviceContract.SubmitAsync("CreateAsset", client.WithArguments()) // TODO
+	// 	if err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{
+	// 			"transactionHash": nil,
+	// 			"serviceID":       nil,
+	// 			"error_msg":       fmt.Sprintf("Failed to submit transaction: %v", err),
+	// 		})
+	// 		return
+	// 	}
+	// 	// 4. 根据是否调用成功，决定返回值
+	// 	status, err := commit.Status()
+	// 	if err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{
+	// 			"transactionHash": nil,
+	// 			"serviceID":       nil,
+	// 			"error_msg":       fmt.Sprintf("Failed to get transaction commit status: %v", err),
+	// 		})
+	// 		return
+	// 	}
+	// 	if !status.Successful {
+	// 		c.JSON(http.StatusOK, gin.H{
+	// 			"transactionHash": nil,
+	// 			"serviceID":       nil,
+	// 			"error_msg":       fmt.Sprintf("Failed to commit transaction with status code %v", status.Code),
+	// 		})
+	// 		return
+	// 	}
+	// serviceInfo := ServiceInfo{
+	// 	ServiceID:      serviceID,
+	// 	ServiceIP:      new_service["IP"],
+	// 	ServicePort:    new_service["Port"],
+	// 	ServiceUser:    new_service["User"],
+	// 	ServicePasswd:  new_service["Password"],
+	// 	ServiceDb:      new_service["Database"],
+	// 	ServiceTable:   new_service["Table"],
+	// }
+	// myService.append(serviceInfo)
+	// 	c.JSON(http.StatusOK, gin.H{
+	// 		"transactionHash": commit.TransactionID(),
+	// 		// "transactionHash": "testHash",
+	// 		"serviceID": serviceID,
+	// 		"error_msg": "None",
+	// 	})
+	// })
+
+	app.GET("/get_services", func(c *gin.Context) {
+		fmt.Println("===================== get_services start =====================")
+		test_service := ServiceInfo{
+			ServiceID:     "ID002",
+			ServiceIP:     "localhost",
+			ServicePort:   "3306",
+			ServiceUser:   "root",
+			ServicePasswd: "Rucsql_123",
+			ServiceDb:     "test_db",
+			ServiceTable:  "persons",
+		}
+		fmt.Println("In get_services, port is ", port)
+		if port == "5001" {
+			myService = append(myService, test_service)
+			fmt.Println("get_services append", len(myService))
+		}
+		// result, err := serviceContract.EvaluateTransaction("GetAllServices")
+		// if err != nil {
+		// 	panic(fmt.Errorf("get_services failed to evoke chaincode: %w", err))
+		// 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// 	return
+		// }
+		// var services []Service
+		// err = json.Unmarshal(result, &services)
+		// if err != nil {
+		// 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// 	return
+		// }
+
+		//Test
 		services := []Service{
 			{
-				ServiceName:     "Service1",
-				ServiceID:       "ID001",
-				SellerURL:       "http://seller1.example.com",
-				SellerPublicKey: "abc123PublicKey",
-				Comment:         "Excellent service!",
-				SellerHeaders: map[string]string{
+				ServiceName:        "Service1",
+				ServiceID:          "ID001",
+				PublisherURL:       "http://62.234.49.75:5000",
+				PublisherPublicKey: "abc123PublicKey",
+				Comment:            "Excellent service!",
+				ServiceHeaders: map[string]string{
 					"Authorization": "Bearer abc123",
 					"Content-Type":  "application/json",
 				},
 				TransactionHash: "0x1234567892",
 			},
 			{
-				ServiceName:     "Service2",
-				ServiceID:       "ID002",
-				SellerURL:       "http://seller2.example.com",
-				SellerPublicKey: "def456PublicKey",
-				Comment:         "Reliable and efficient.",
-				SellerHeaders: map[string]string{
+				ServiceName:        "Service2",
+				ServiceID:          "ID002",
+				PublisherURL:       "http://62.234.49.75:5001",
+				PublisherPublicKey: "def456PublicKey",
+				Comment:            "Reliable and efficient.",
+				ServiceHeaders: map[string]string{
 					"Authorization": "Bearer def456",
 					"Content-Type":  "application/json",
 				},
 				TransactionHash: "0x1234567891",
 			},
-			{
-				ServiceName:     "Service3",
-				ServiceID:       "ID003",
-				SellerURL:       "http://seller3.example.com",
-				SellerPublicKey: "ghi789PublicKey",
-				Comment:         "Good, but room for improvement.",
-				SellerHeaders: map[string]string{
-					"Authorization": "Bearer ghi789",
-					"Content-Type":  "application/json",
-				},
-				TransactionHash: "0x1234567890",
-			},
 		}
-
 		c.JSON(http.StatusOK, gin.H{"services": services})
 	})
 
-	app.POST("/send_application",func(c *gin.Context){
-
+	app.GET("/get_toMe", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"applications": applicationToMe})
 	})
 
-	app.POST("/approve_application", func(c *gin.Context) {
+	app.GET("/get_sendOut", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"applications": myApplication})
+	})
+
+	app.Any("/send_application", func(c *gin.Context) {
+		// 设置 CORS 头部
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type")
+		fmt.Println("send_application finish Header Set")
+
+		if c.Request.Method == http.MethodOptions {
+			// 处理预检请求的响应
+			fmt.Println("send_application receive OPTIONS")
+			c.Status(http.StatusOK)
+			return
+		}
+
+		if c.Request.Method == http.MethodPost {
+			fmt.Println("================= send_application start DEBUG ================")
+			// fmt.Println("send_application receive referer: ", referer)
+			body, err := ioutil.ReadAll(c.Request.Body)
+			if err != nil {
+				fmt.Println("send_application read body err:", err)
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			var application map[string]interface{}
+			err = json.Unmarshal(body, &application)
+			if err != nil {
+				fmt.Println("send_application unmarshal response err: ", err)
+				return
+			}
+			fmt.Println("send_application receive application:", application)
+			InitiatorPublicKey := new(ecdsa.PublicKey)
+			X := application["InitiatorPublicKeyX"].(string)
+			Y := application["InitiatorPublicKeyY"].(string)
+			InitiatorPublicKey.X, _ = new(big.Int).SetString(X, 16)
+			InitiatorPublicKey.Y, _ = new(big.Int).SetString(Y, 16)
+			InitiatorPublicKey.Curve = elliptic.P256()
+			fmt.Println("initiatorpublickeyX: ", InitiatorPublicKey.X, "y:  ", InitiatorPublicKey.Y)
+			// InitiatorPublicKey, err := decodePublicKey(encodedPubKey.([]byte))
+			fmt.Println("send_application decode public Key", InitiatorPublicKey)
+			// InitiatorPublicKey := application["InitiatorPublicKey"]
+			referer := c.Request.Referer()
+			newUrl := referer
+			// 验签
+			verified := execVerify(referer, InitiatorPublicKey)
+
+			if verified {
+				application["InitiatorURL"] = newUrl
+				newApplication := Application{
+					InitiatorPublicKey: InitiatorPublicKey,
+					ApplicationTime:    time.Now().Format("2006-01-02 15:04:05"),
+					InitiatorURL:       newUrl,
+					InitiatorID:        application["InitiatorID"].(string),
+					ServiceID:          application["ServiceID"].(string),
+					ServiceName:        application["ServiceName"].(string),
+				}
+				fmt.Println("send_application successfully verify a signature.")
+				applicationToMe = append(applicationToMe, newApplication)
+				c.JSON(http.StatusOK, gin.H{"new_application": application})
+			} else {
+				fmt.Println("send_application failed in verifying a signature.")
+				c.JSON(http.StatusBadRequest, nil)
+			}
+		}
+	})
+
+	// app.POST("/approve_application", func(c *gin.Context) {
+	// 	var answer map[string]interface{}
+	// 	if err := c.ShouldBindJSON(&answer); err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	// 	}
+	// 	// 0. 获取Initiator的URL
+	// 	InitiatorUrl := answer["InitiatorURL"].(string)
+	// 	if answer["Status"] == 1 {
+	// 		// 前端通过验证
+	// 		// 1. 构造Query
+	// 		NewQuery := Query{
+	// 			DataDigest:     "ignored",
+	// 			DataRows:       0,
+	// 			InitiatorID:    answer["InitiatorID"].(string),
+	// 			InitiatorMSPID: "ignored",
+	// 			Legitimacy:     true,
+	// 			QueriedTable:   "ignored",
+	// 			QueryID:        "ignored",
+	// 			QueryDigest:    "ignored",
+	// 			ServiceID:      answer["ServiceID"].(string),
+	// 			Timestamp:      int(time.Now().Unix())}
+	// 		// 2. 调用链码，将Query上链
+	// 		// TODO
+	// 		_, commit, err := queryContract.SubmitAsync("PutQuery", client.WithArguments(NewQuery))
+	// 		if err != nil {
+	// 			panic(fmt.Errorf("failed to submit transaction: %w", err))
+	// 		}
+	// 		status, err := commit.Status()
+	// 		if err != nil {
+	// 			panic(fmt.Errorf("failed to get transaction commit status: %w", err))
+	// 		}
+	// 		if !status.Successful {
+	// 			panic(fmt.Errorf("failed to commit transaction with status code %v", status.Code))
+	// 		}
+	// 	}
+	// 	// 3. 向initiator的receive_answer路由发送审批结果
+	// 	newUrl := InitiatorUrl + "/receive_answer"
+	// 	var approved int
+	// 	if answer["Status"] == 1 {
+	// 		approved = 1
+	// 	} else {
+	// 		approved = 2
+	// 	}
+	// 	ret_answer := ApplicationAnswer{
+	// 		InitiatorID:     answer["InitiatorID"].(string),
+	// 		InitiatorURL:	 answer["InitiatorURL"].(string)
+	// 		ServiceID:       answer["ServiceID"].(string),
+	// 		ServiceName:	 answer["ServiceName"].(string),
+	// 		PublisherURL:	 MyURL,
+	// 		ProcessTime:     time.Now().Format("2006-01-02 15:04:05"),
+	// 		Status:        approved,
+	// 		ApplicationTime: answer["ApplicationTime"],
+	// 	}
+	// 	payload := map[string]interface{}{
+	// 		"ApplicationAnswer": ret_answer,
+	// 	}
+	// 	body, err := json.Marshal(payload)
+	// 	if err != nil {
+	// 		fmt.Println("approve_application json.Marshal err: ", err)
+	// 		return
+	// 	}
+	// 	req, err := http.NewRequest(http.MethodPost, newUrl, bytes.NewReader(body))
+	// 	if err != nil {
+	// 		fmt.Println("approve_application http.NewRequest err: ", err)
+	// 		return
+	// 	}
+	// 	req.Header.Set("Content-Type", "application/json")
+	// 	httpClient := &http.Client{Timeout: 5 * time.Second}
+	// 	resp, err := httpClient.Do(req)
+	// 	defer resp.Body.Close()
+	// 	if err != nil {
+	// 		fmt.Println("approve_application http.DefaultClient.Do() err:", err)
+	// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// 		return
+	// 	}
+
+	// 	// 4. 删除applicationToMe里的对应项
+	// 	for i := 0; i < len(applicationToMe); i++ {
+	// 		if applicationToMe[i].InitiatorID == answer["InitiatorID"].(string) && applicationToMe[i].ServiceID == answer["ServiceID"].(string) {
+	// 			applicationToMe = append(applicationToMe[:i], applicationToMe[i+1:]...)
+	// 			break
+	// 		}
+	// 	}
+	// })
+
+	app.POST("/request_data", func(c *gin.Context) {
+		fmt.Println("=============================== request_data start ===============================")
+		// 接收从Initiator发来的数据申请，验证其权限后返回
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type")
+		fmt.Println("request_data finish Header Set")
+
+		// 1. 解析申请数据包
+		body, err := ioutil.ReadAll(c.Request.Body)
+		if err != nil {
+			fmt.Println("send_application read body err:", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		var application map[string]interface{}
+		err = json.Unmarshal(body, &application)
+		if err != nil {
+			fmt.Println("request_data json.Unmarshal err:", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// 1.1 验签
+		InitiatorPublicKey := new(ecdsa.PublicKey)
+		X := application["InitiatorPublicKeyX"].(string)
+		Y := application["InitiatorPublicKeyY"].(string)
+		InitiatorPublicKey.X, _ = new(big.Int).SetString(X, 16)
+		InitiatorPublicKey.Y, _ = new(big.Int).SetString(Y, 16)
+		InitiatorPublicKey.Curve = elliptic.P256()
+
+		referer := c.Request.Referer()
+		verified := execVerify(referer, InitiatorPublicKey)
+
+		if !verified {
+			fmt.Println("request_data failed in verifying a signature.")
+			c.JSON(http.StatusBadRequest, nil)
+			return
+		}
+		// 2. 调用链码
+		// TODO!!!!!
+		// 3. 根据链码结果决定向Initiator的fetch_data发什么内容
+		// _, commit, err := queryContract.SubmitAsync("PutQuery", client.WithArguments("certificate", "id", "dataDigest", -1, "initiatorID", "initiatorMSPID", false, "queriedTable", "queryDigest", "serviceID", 0))
+		// if err != nil {
+		// 	panic(fmt.Errorf("failed to submit transaction: %w", err))
+		// }
+		// status, err := commit.Status()
+		// if err != nil {
+		// 	panic(fmt.Errorf("failed to get transaction commit status: %w", err))
+		// }
+		// if !status.Successful {
+		// 	panic(fmt.Errorf("failed to commit transaction with status code %v", status.Code))
+		// }
+		// 3 从数据库获取data
+		// 3.1 找到对应ServiceInfo
+		var info ServiceInfo
+		serviceID := application["ServiceID"]
+		found := false
+		fmt.Println("myService length:", len(myService))
+		for i := 0; i < len(myService); i++ {
+			fmt.Println("serviceInfo search:", myService[i])
+			if myService[i].ServiceID == serviceID {
+				info = myService[i]
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Println("request_data failed in finding a service.")
+			c.JSON(http.StatusBadRequest, nil)
+			return
+		}
+		// 3.2 用info里的信息调用select
+		data := dataBase(info.ServiceUser, info.ServicePasswd, info.ServiceIP, info.ServicePort, info.ServiceDb, info.ServiceTable)
+		fmt.Println("request_data get data:", data)
+		c.JSON(http.StatusOK, gin.H{"data": data})
+	})
+
+	// INITIATOR
+	app.POST("/forward_application", func(c *gin.Context) {
 		var data map[string]interface{}
 		if err := c.ShouldBindJSON(&data); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		newApplication := ApplicationAnswer{
+			InitiatorID:     MyID,
+			InitiatorURL:    MyURL,
+			ServiceID:       data["ServiceID"].(string),
+			ServiceName:     data["ServiceName"].(string),
+			PublisherURL:    data["PublisherURL"].(string),
+			Status:          0,
+			ApplicationTime: time.Now().Format("2006-01-02 15:04:05")}
+		myApplication = append(myApplication, newApplication)
+		PublisherURL := data["PublisherURL"].(string)
+		data["InitiatorID"] = MyID
+		data["InitiatorURL"] = MyURL
+		// encode pubKey
+		// encodedPubKey, err := encodePublicKey(MyPubKey)
+		// if err != nil {
+		// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// 	return
+		// }
+		//data["InitiatorPublicKeyCurve"] = MyPubKey.Curve.Params()
+		data["InitiatorPublicKeyX"] = MyPubKey.X.Text(16)
+		data["InitiatorPublicKeyY"] = MyPubKey.Y.Text(16)
 
-		// Process data...
+		sendData, err := json.Marshal(data)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 
-		c.JSON(http.StatusOK, gin.H{"serviceID": "ID005"})
-	})
+		fmt.Println("======================== forward_application sending data ========================")
+		fmt.Println("data: ", data)
+		fmt.Println("objURL:", PublisherURL+"/send_application")
+		fmt.Println("MyIP:", MyIP)
 
-	app.POST("/put_service", func(c *gin.Context) {
-		var data map[string]interface{}
-		if err := c.ShouldBindJSON(&data); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		req, err := http.NewRequest("POST", PublisherURL+"/send_application", bytes.NewBuffer(sendData))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		refererURL := MyURL
+		// refererURL, err := url.Parse((MyIP + ":" + port))
+		// if err != nil {
+		// 	fmt.Println("forward_application parsing url error: ", err)
+		// 	return
+		// }
+		req.Header.Set("Referer", refererURL)
+		fmt.Println("forward_application set header:", refererURL)
+
+		httpClient := &http.Client{}
+		res, err := httpClient.Do(req)
+		if err != nil {
+			fmt.Println("forward_application err on httpClient.Do()", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		// Process data...
+		fmt.Println("======================== forward_application receive response ========================")
+		fmt.Println("res content: ", res)
+		c.JSON(200, gin.H{"success": "success"})
+		defer res.Body.Close()
 
-		c.JSON(http.StatusOK, gin.H{"serviceID": "ID005", "transactionHash": "0x123468q235"})
+		// services, err := ioutil.ReadAll(res.Body)
+		// if err != nil {
+		// 	fmt.Println("forward_application can't receive services: ", err.Error())
+		// c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// return
+		// }
+
+		// var service Service
+		// for i range in services {
+		// 	if i["ServiceID"]==serviceID{
+		// 		service = i
+		// 		break
+		// 	}
+		// }
+		// content := map[string]interface{}{
+		// 	"buyerId" : service["buyerID"],
+		// 	"buyerPublicKey" : service["buyerPublicKey"],
+		// 	"applicationTime" : service["applicationTime"],
+		// 	"nounce" : service["nounce"],
+		// }
+		// sign := ourSign(getPrivateKey(),[]byte(content))
+		// content["sign"]=string(sign)
+		// sendData,_ := json.Marshal(content)
+		// res, err := http.Post(service["sellerurl"]+"/send_application",
+		// "application/json", bytes.NewBuffer([]byte(sendData)))
+
+		// if err != nil {
+		// 	fmt.Println("Fatal error ", err.Error())
+		// }else{
+		// 	c.JSON(200,gin.H{
+		// 		"applicationID",ioutil.ReadAll(res.Body),
+		// 	})
+		// }
 	})
 
 	app.POST("/fetch_data", func(c *gin.Context) {
@@ -133,159 +697,404 @@ func main() {
 			return
 		}
 
-		// Process data...
+		data["InitiatorID"] = MyID
+		data["InitiatorURL"] = MyURL
+		data["InitiatorPublicKeyX"] = MyPubKey.X.Text(16)
+		data["InitiatorPublicKeyY"] = MyPubKey.Y.Text(16)
+		// serviceID := data["ServiceID"]
+		PublisherURL := data["PublisherURL"].(string)
 
-		c.JSON(http.StatusOK, gin.H{
-			"data":         [][]int{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}},
-			"column_names": []string{"column1", "column2", "column3"},
-		})
+		sendData, err := json.Marshal(data)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+
+		req, err := http.NewRequest("POST", PublisherURL+"/request_data", bytes.NewBuffer(sendData))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		refererURL := MyURL
+		req.Header.Set("Referer", refererURL)
+
+		httpClient := &http.Client{}
+		res, err := httpClient.Do(req)
+		if err != nil {
+			fmt.Println("forward_application err on httpClient.Do()", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		defer res.Body.Close()
+
+		fmt.Println("======================== fetch_data receive response ========================")
+
+		// TODO: decode message
+		respBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			fmt.Println("fetch_data err on ioutil.ReadAll()", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		var respData map[string]interface{}
+		err = json.Unmarshal(respBody, &respData)
+		if err != nil {
+			fmt.Println("fetch_data err on json.Unmarshal()", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		retdata := respData["data"]
+		fmt.Println("fetch_data get data: ", retdata)
+		c.JSON(200, gin.H{"data": retdata})
+
+	})
+
+	app.POST("/receive_message", func(c *gin.Context) {
+		// 1. receive raw message
+		var data map[string]interface{}
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		fmt.Println("============= receive_message start debug =============")
+		fmt.Println("receive_message receive message", data)
+		// 2. generate the signature
+		message := data["message"]
+		signature, err := SignMessage(message.(string), signer)
+		if err != nil {
+			fmt.Println("receive_message SignMessage() err", err)
+		}
+		// content := map[string]interface{}{
+		// 	"message": message,
+		// 	"sign":    signature,
+		// }
+		// 3. send in response
+		// sendData, _ := json.Marshal(content)
+		// res, err := http.Post(service["sellerurl"]+"/receive_sign",
+		// "application/json", bytes.NewBuffer([]byte(sendData)))
+		//返回值
+		c.JSON(http.StatusOK, gin.H{"message": message, "signature": signature})
+	})
+
+	app.POST("/receive_answer", func(c *gin.Context) {
+		// 修改myApplication里对应列表的Status
+		var data map[string]interface{}
+		if err := c.ShouldBindJSON(&data); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		for i := 0; i < len(myApplication); i++ {
+			if myApplication[i].ServiceID == data["ServiceID"].(string) && myApplication[i].InitiatorID == data["InitiatorID"].(string) {
+				myApplication[i].Status = data["Status"].(int)
+				// update applicationtime
+				myApplication[i].ApplicationTime = data["ApplicationTime"].(string)
+			}
+			break
+		}
 	})
 
 	app.GET("/app.js", func(c *gin.Context) {
-		c.File("../app.js")
+		c.File("../data-sharing-webui/app.js")
+	})
+	app.GET("/toMe.js", func(c *gin.Context) {
+		c.File("../data-sharing-webui/toMe.js")
+	})
+	app.GET("/sendOut.js", func(c *gin.Context) {
+		c.File("../data-sharing-webui/sendOut.js")
 	})
 
 	app.GET("/styles.css", func(c *gin.Context) {
-		c.File("../styles.css")
+		c.File("../data-sharing-webui/styles.css")
 	})
 
-	app.Static("/static","./static")
+	// 将 "../data-sharing-webui" 目录下的静态文件映射到 "/static" 路由路径
+	// app.Use(static.Serve("/static", static.LocalFile("../data-sharing-webui", true)))
+	app.Static("/static", "../data-sharing-webui")
 
 	// 监听并启动 5000 端口
-	app.Run(":5000")
+	portStr := string(port)
+	app.Run(":" + portStr)
 }
 
-// This type of transaction would typically only be run once by an application the first time it was started after its
-// initial deployment. A new version of the chaincode deployed later would likely not need to run an "init" function.
-// 这种类型的事务通常只在应用程序首次启动后运行一次。运行一次。之后部署的新版本 chaincode 可能不需要运行 "init "函数。
-// 初始化账册
-func initLedger(contract *client.Contract) {
-	fmt.Printf("\n--> Submit Transaction: InitLedger, function creates the initial set of assets on the ledger \n")
-
-	_, err := contract.SubmitTransaction("InitLedger") //提交交易
+func getOuterIP() (ipv4 string, err error) {
+	resp, err := http.Get("https://api.ipify.org?format=text")
 	if err != nil {
-		panic(fmt.Errorf("failed to submit transaction: %w", err))
+		return "", err
 	}
+	defer resp.Body.Close()
 
-	fmt.Printf("*** Transaction committed successfully\n")
-}
-
-// Evaluate a transaction to query ledger state.
-// 评估一个交易来查询分类帐状态
-func getAllAssets(contract *client.Contract) {
-	fmt.Println("\n--> Evaluate Transaction: GetAllAssets, function returns all the current assets on the ledger")
-
-	evaluateResult, err := contract.EvaluateTransaction("GetAllAssets") //调用contract的函数，得到评估结果，
+	ip, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		panic(fmt.Errorf("failed to evaluate transaction: %w", err))
+		return "", err
 	}
-	result := formatJSON(evaluateResult) //把结果改成字符串类型
 
-	fmt.Printf("*** Result:%s\n", result)
+	return strings.TrimSpace(string(ip)), nil
 }
 
-// Submit a transaction synchronously, blocking until it has been committed to the ledger.
-// 同步提交事务，在事务提交到分类账之前一直处于阻塞状态。
-func createAsset(contract *client.Contract) {
-	fmt.Printf("\n--> Submit Transaction: CreateAsset, creates new asset with ID, Color, Size, Owner and AppraisedValue arguments \n")
-
-	_, err := contract.SubmitTransaction("CreateAsset", assetId, "yellow", "5", "Tom", "1300") //合约里面上传一个新的合约，里面是初始化参数
+func GetLocalPort() (string, error) {
+	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
-		panic(fmt.Errorf("failed to submit transaction: %w", err))
+		return "", err
 	}
+	defer ln.Close()
 
-	fmt.Printf("*** Transaction committed successfully\n")
+	port := fmt.Sprintf("%d", ln.Addr().(*net.TCPAddr).Port)
+	return port, nil
 }
 
-// Evaluate a transaction by assetID to query ledger state.
-// 按资产 ID 评估交易，以查询分类账状态。
-func readAssetByID(contract *client.Contract) {
-	fmt.Printf("\n--> Evaluate Transaction: ReadAsset, function returns asset attributes\n")
+func setConnParams(port string) {
+	if port == "5000" {
+		mspID = "Org1MSP"
+		cryptoPath = "/home/ubuntu/hyperledger/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com"
+		certPath = cryptoPath + "/users/User1@org1.example.com/msp/signcerts/cert.pem"
+		keyPath = cryptoPath + "/users/User1@org1.example.com/msp/keystore/"
+		tlsCertPath = cryptoPath + "/peers/peer0.org1.example.com/tls/ca.crt"
+		peerEndpoint = "localhost:7051"
+		gatewayPeer = "peer0.org1.example.com"
+	} else if port == "5001" {
+		mspID = "Org2MSP"
+		cryptoPath = "/home/ubuntu/hyperledger/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com"
+		certPath = cryptoPath + "/users/User1@org2.example.com/msp/signcerts/cert.pem"
+		keyPath = cryptoPath + "/users/User1@org2.example.com/msp/keystore/"
+		tlsCertPath = cryptoPath + "/peers/peer0.org2.example.com/tls/ca.crt"
+		peerEndpoint = "localhost:9051"
+		gatewayPeer = "peer0.org2.example.com"
+	} else {
+		mspID = "Org1MSP"
+		cryptoPath = "/home/ubuntu/hyperledger/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com"
+		certPath = cryptoPath + "/users/User1@org1.example.com/msp/signcerts/cert.pem"
+		keyPath = cryptoPath + "/users/User1@org1.example.com/msp/keystore/"
+		tlsCertPath = cryptoPath + "/peers/peer0.org1.example.com/tls/ca.crt"
+		peerEndpoint = "localhost:7051"
+		gatewayPeer = "peer0.org1.example.com"
+	}
+}
 
-	evaluateResult, err := contract.EvaluateTransaction("ReadAsset", assetId)
+func generateRandomMessage() string {
+	b := make([]byte, 10)
+	rand.Read(b)
+	randomMessage := fmt.Sprintf("%x", b)
+	return randomMessage
+}
+
+func SignMessage(message string, signer crypto.Signer) (string, error) {
+	hash := sha256.Sum256([]byte(message))
+
+	signature, err := signer.Sign(rand.Reader, hash[:], crypto.SHA256)
 	if err != nil {
-		panic(fmt.Errorf("failed to evaluate transaction: %w", err))
+		return "", fmt.Errorf("failed to sign message: %w", err)
 	}
-	result := formatJSON(evaluateResult)
 
-	fmt.Printf("*** Result:%s\n", result)
+	signatureStr := base64.StdEncoding.EncodeToString(signature)
+	return signatureStr, nil
 }
 
-// Submit transaction asynchronously, blocking until the transaction has been sent to the orderer, and allowing
-// this thread to process the chaincode response (e.g. update a UI) without waiting for the commit notification
-// 异步提交事务，阻塞直到事务被发送给提交者，并允许该线程处理链码响应（例如更新用户界面），而无需等待提交通知
-func transferAssetAsync(contract *client.Contract) {
-	fmt.Printf("\n--> Async Submit Transaction: TransferAsset, updates existing asset owner")
-
-	submitResult, commit, err := contract.SubmitAsync("TransferAsset", client.WithArguments(assetId, "Mark")) //异步提交
+func VerifySignature(message, signature string, publicKey *ecdsa.PublicKey) error {
+	decodedSignature, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
-		panic(fmt.Errorf("failed to submit transaction asynchronously: %w", err))
+		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	fmt.Printf("\n*** Successfully submitted transaction to transfer ownership from %s to Mark. \n", string(submitResult))
-	fmt.Println("*** Waiting for transaction commit.")
+	hash := sha256.Sum256([]byte(message))
 
-	if commitStatus, err := commit.Status(); err != nil {
-		panic(fmt.Errorf("failed to get commit status: %w", err))
-	} else if !commitStatus.Successful {
-		panic(fmt.Errorf("transaction %s failed to commit with status: %d", commitStatus.TransactionID, int32(commitStatus.Code)))
+	// 将 *ecdsa.PublicKey 转换为 crypto.PublicKey
+	if !ecdsa.VerifyASN1(publicKey, hash[:], decodedSignature) {
+		return fmt.Errorf("invalid signature")
 	}
-
-	fmt.Printf("*** Transaction committed successfully\n")
+	fmt.Println("VerifySignature successfully verify a signature")
+	return nil
 }
 
-// Submit transaction, passing in the wrong number of arguments ,expected to throw an error containing details of any error responses from the smart contract.
-func exampleErrorHandling(contract *client.Contract) { //错误处理
-	fmt.Println("\n--> Submit Transaction: UpdateAsset asset70, asset70 does not exist and should return an error")
-
-	_, err := contract.SubmitTransaction("UpdateAsset", "asset70", "blue", "5", "Tomoko", "300")
-	if err == nil {
-		panic("******** FAILED to return an error")
+func dataBase(usrname string, passwd string, ip string, port string, databaseName string, tableName string) []map[string]interface{} {
+	dsn := usrname + ":" + passwd + "@tcp(" + ip + ":" + port + ")/" + databaseName
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		fmt.Printf("dsn:%s invalid,err:%v\n", dsn, err)
+		return nil
 	}
-
-	fmt.Println("*** Successfully caught the error:")
-
-	switch err := err.(type) {
-	case *client.EndorseError:
-		fmt.Printf("Endorse error for transaction %s with gRPC status %v: %s\n", err.TransactionID, status.Code(err), err)
-	case *client.SubmitError:
-		fmt.Printf("Submit error for transaction %s with gRPC status %v: %s\n", err.TransactionID, status.Code(err), err)
-	case *client.CommitStatusError:
-		if errors.Is(err, context.DeadlineExceeded) {
-			fmt.Printf("Timeout waiting for transaction %s commit status: %s", err.TransactionID, err)
-		} else {
-			fmt.Printf("Error obtaining commit status for transaction %s with gRPC status %v: %s\n", err.TransactionID, status.Code(err), err)
-		}
-	case *client.CommitError:
-		fmt.Printf("Transaction %s failed to commit with status %d: %s\n", err.TransactionID, int32(err.Code), err)
-	default:
-		panic(fmt.Errorf("unexpected error type %T: %w", err, err))
+	defer db.Close()
+	err = db.Ping() //尝试连接数据库
+	if err != nil {
+		fmt.Printf("open %s faild,err:%v\n", dsn, err)
+		return nil
 	}
+	sqlStr := "select * from " + tableName + ";"
+	rows, err := db.Query(sqlStr)
+	if err != nil {
+		fmt.Println(err)
+	}
+	// defer close result set
+	defer rows.Close()
 
-	// Any error that originates from a peer or orderer node external to the gateway will have its details
-	// embedded within the gRPC status error. The following code shows how to extract that.
-	statusErr := status.Convert(err)
-
-	details := statusErr.Details()
-	if len(details) > 0 {
-		fmt.Println("Error Details:")
-
-		for _, detail := range details {
-			switch detail := detail.(type) {
-			case *gateway.ErrorDetail:
-				fmt.Printf("- address: %s, mspId: %s, message: %s\n", detail.Address, detail.MspId, detail.Message)
+	cols, _ := rows.Columns()
+	var ret []map[string]interface{}
+	if len(cols) > 0 {
+		for rows.Next() {
+			buff := make([]interface{}, len(cols))
+			data := make([][]byte, len(cols)) //数据库中的NULL值可以扫描到字节中
+			for i := range buff {
+				buff[i] = &data[i]
 			}
+			rows.Scan(buff...) //扫描到buff接口中，实际是字符串类型data中
+			//将每一行数据存放到数组中
+			dataKv := make(map[string]interface{}, len(cols))
+			for k, col := range data { //k是index，col是对应的值
+				//fmt.Printf("%30s:\t%s\n", cols[k], col)
+				dataKv[cols[k]] = string(col)
+			}
+			ret = append(ret, dataKv)
 		}
+		return ret
+	} else {
+		return nil
 	}
 }
 
-// Format JSON data
-// 格式化json数据，应该是转为string
-func formatJSON(data []byte) string {
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, data, "", "  "); err != nil {
-		panic(fmt.Errorf("failed to parse JSON: %w", err))
+func execVerify(referer string, InitiatorPublicKey *ecdsa.PublicKey) bool {
+	// 1. 生成随机message
+	randomMessage := generateRandomMessage()
+	fmt.Println("execVerify generate random message: ", randomMessage)
+
+	// 2. 将随机message发送给申请方的receive_message接口
+	// 2.1 获取对方的url
+	newUrl := referer + "/receive_message"
+	// 2.2 构造payload
+	payload := map[string]interface{}{
+		"message":      randomMessage,
+		"PublisherUrl": MyURL,
 	}
-	return prettyJSON.String()
+	fmt.Println("execVerify generate payload: ", payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Println("execVerify json.Marshal err: ", err)
+		return false
+	}
+	// 2.3 send message
+	req, err := http.NewRequest(http.MethodPost, newUrl, bytes.NewReader(body))
+	if err != nil {
+		fmt.Println("execVerify http.NewRequest err: ", err)
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Println("execVerify http.DefaultClient.Do() err:", err)
+		// c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	defer resp.Body.Close()
+
+	// 4.等待签名后的结果
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("execVerify ioutil.ReadAll() err: ", err)
+		return false
+	}
+
+	var respData map[string]interface{}
+	err = json.Unmarshal(respBody, &respData)
+	fmt.Println("respData:", respData)
+	if err != nil {
+		fmt.Println("execVerify unmarshal response err: ", err)
+		// c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+
+	signedMessage, ok := respData["signature"].(string)
+	if !ok {
+		// c.JSON(http.StatusBadRequest, gin.H{"error": "invalid response format"})
+		return false
+	}
+
+	// 5. 验证签名
+	fmt.Println("execVerify initiator pub key:", InitiatorPublicKey)
+	// InitPubKey, err := parseECDSAPublicKey(InitiatorPublicKey)
+	if err != nil {
+		fmt.Println("send_application parseECDSAPublicKey err: ", err)
+		// c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return false
+	}
+	verifiedErr := VerifySignature(randomMessage, signedMessage, InitiatorPublicKey)
+	if verifiedErr == nil {
+		return true
+	} else {
+		return false
+	}
 }
 
+// // parseECDSAPublicKey 解析 ECDSA 公钥
+// func parseECDSAPublicKey(pubKeyMap map[string]interface{}) (*ecdsa.PublicKey, error) {
+// 	// 从 map 中提取曲线参数
+// 	curveName, ok := pubKeyMap["Curve"].(string)
+// 	if !ok {
+// 		return nil, fmt.Errorf("invalid curve type")
+// 	}
+// 	curve := elliptic.GetCurveByName(curveName)
+// 	if curve == nil {
+// 		return nil, fmt.Errorf("unsupported curve: %s", curveName)
+// 	}
+
+// 	// 从 map 中提取 X 和 Y 坐标值
+// 	xValue, ok := pubKeyMap["X"].(float64)
+// 	if !ok {
+// 		return nil, fmt.Errorf("invalid X value type")
+// 	}
+// 	yValue, ok := pubKeyMap["Y"].(float64)
+// 	if !ok {
+// 		return nil, fmt.Errorf("invalid Y value type")
+// 	}
+
+// 	// 构造 ecdsa.PublicKey 对象
+// 	x := big.NewFloat(xValue)
+// 	y := big.NewFloat(yValue)
+// 	xInt, _ := x.Int(nil)
+// 	yInt, _ := y.Int(nil)
+// 	pubKey := ecdsa.PublicKey{
+// 		Curve: curve,
+// 		X:     xInt,
+// 		Y:     yInt,
+// 	}
+
+// 	return &pubKey, nil
+// }
+
+/*
+func encodePublicKey(pub *ecdsa.PublicKey) []byte {
+	if pub == nil || pub.X == nil || pub.Y == nil {
+		return nil
+	}
+	return elliptic.MarshalCompressed(elliptic.P256(), pub.X, pub.Y)
+}
+
+func decodePublicKey(pub []byte) (*ecdsa.PublicKey, error) {
+	x, y := elliptic.UnmarshalCompressed(elliptic.P256(), pub)
+	if x == nil {
+		error := fmt.Errorf("invalid public key")
+		return nil, error
+	}
+	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}, nil
+}*/
+
+/*func encodePublicKey(pubKey *ecdsa.PublicKey) ([]byte, error) {
+	var buf bytes.Buffer
+	gob.Register(elliptic.P256())
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(pubKey)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// 从字节切片解码公钥
+func decodePublicKey(data []byte) (*ecdsa.PublicKey, error) {
+	buf := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buf)
+	var pubKey ecdsa.PublicKey
+	err := dec.Decode(&pubKey)
+	if err != nil {
+		return nil, err
+	}
+	return &pubKey, nil
+}
+*/

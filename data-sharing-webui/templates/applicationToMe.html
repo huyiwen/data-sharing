@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="stylesheet" type="text/css" href="../styles.css" />
+        <title>数据流通平台-待审批申请</title>
+        <script>
+            var BASE_PORT = "{{.Port}}"
+            var BASE_URL = "http://62.234.49.75:" + BASE_PORT;
+        </script>
+    </head>
+    <body>
+        <ul>
+            <li><a href="/">首页</a></li>
+            <li><a class="active" href="/applicationToMe">待审批申请</a></li>
+            <li><a href="/myApplication">我的申请</a></li>
+        </ul>
+        <!-- <button id="testHTTPButton">click me</button> -->
+        <div class="header">
+            <h1 class="title">待审批申请</h1>
+        </div>
+        <table id="applicationTable">
+            <thead>
+                <tr>
+                    <th>ServiceName</th>
+                    <th>ServiceID</th>
+                    <th>InitiatorID</th>
+                    <th>ApplicationTime</th>
+                    <th>Status</th>
+                    <th>Operation</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+
+        <script src="../toMe.js"></script>
+    </body>
+</html>

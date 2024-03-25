@@ -24,6 +24,20 @@
 ./network.sh deployCC -ccn [name] -ccp [path] -ccl go
 ```
 
+1: `Asset` -> `Query`: `CreateAsset` -> `PutQuery`, `ReadAsset` -> `GetQuery`, `GetAllAssets` -> `GetAllQueries`
+2: `TokenERC721Contract` -> `Card`
+
+User ==> UserClient ==> ServiceClient ==> Chaincode & SQL
+
+1. User select a service in webpage
+2. UserClient starts a connection with ServiceClient
+        1. UserClient request to start a connection
+        2. ServiceClient send back a random message
+        3. UserClient sign this message to verify the ownership of current account (i.e. peer node)
+        4. ServiceClient verify the signed message with UserClient's public key and start listening
+	- https://github.com/hyperledger/fabric-samples/blob/main/asset-transfer-events/application-gateway-go/app.go
+3. ServiceClient resolve the request of user and invoke corredsponding chaincode
+
 ### Rest API
 
 ```bash
@@ -67,68 +81,6 @@ curl --request GET \
 - !! TransferAsset
 - !! GetAllAssets
 
-
-## Private Data Logics
-
-forked from asset-transfer-private-data
-
-### Create Asset
-
-1. Get new asset from transient map: `transientAssetJSON` -> Unmarshal -> `assetInput`
-2. Check if asset already exists in private data "dataAssetCollection"
-3. `verifyClientOrgMatchesPeerOrg(ctx)`
-4. `asset` -> Marshal -> `assetJSONasBytes`
-5. Put `assetJSONasBytes` into private data "dataAssetCollection"
-6. `assetPrivateDetails` -> Marshal -> `assetPrivateDetailsAsBytes`
-7. Put `assetPrivateDetailsAsBytes` into private data `getCollectionName(ctx)`
-
-### Agree To Transfer
-
-### Transfer Asset
-
-### Delete Asset
-
-### Purge Asset
-
-PurgeAsset can be used by the owner of the asset to delete the asset. Trigger removal of the asset.
-
-### Delete Tranfer Agreement
-
-DeleteTranferAgreement can be used by the buyer to withdraw a proposal from the asset collection and from his own collection.
-
-### Read Asset
-
-### Read Asset Private Details
-
-### Read Transfer Agreement
-
-### Get Asset By Range
-
-### Query AssetByOwner
-
-### Query Assets
-
-### Internal Functions
-
-- verifyAgreement
-- getCollectionName
-- verifyClientOrgMatchesPeerOrg
-- submittingClientIdentity
-- getQueryResultForQueryString
-
-
-## Research Example - `asset-transfer-basic`
-
-- InitLedger
-- !! CreateAsset
-- !! ReadAsset
-- ! UpdateAsset
-- !! DeleteAsset
-- AssetExists
-- !! TransferAsset
-- ! GetAllAssets
-
-
 ## Contract API
 
 ["github.com/hyperledger/fabric-contract-api-go"](https://pkg.go.dev/github.com/hyperledger/fabric-contract-api-go/contractapi)
@@ -166,5 +118,3 @@ if err != nil {
 ctx.GetStub().GetPrivateData("dataAssetCollection", id)
 ```
 
-
-### 

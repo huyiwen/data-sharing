@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>User Page</title>
+</head>
+<body>
+    <input type="text" id="username" placeholder="Enter your username">
+    <button onclick="sendRequest()">Submit</button>
+
+    <script>
+        function sendRequest() {
+            var username = document.getElementById("username").value;
+            // fetch("/user/" + username)
+            //     .then(response => response.text())
+            //     .then(data => {
+            //         console.log(data);
+            //         // 可以在这里处理服务器的响应，比如更新页面内容
+            //     })
+            //     .catch(error => console.error('Error:', error));
+            window.location.href = "/user/" + username;
+        }
+    </script>
+</body>
+</html>
