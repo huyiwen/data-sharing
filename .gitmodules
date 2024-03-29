@@ -1,3 +1,6 @@
 [submodule "data-sharing-service-client"]
 	path = data-sharing-service-client
 	url = git@github.com:huyiwen/data-sharing-service-client.git
+[submodule "data-sharing-client"]
+	path = data-sharing-client
+	url = git@github.com:huyiwen/data-sharing-client.git
