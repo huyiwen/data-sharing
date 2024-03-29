@@ -3,11 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="stylesheet" type="text/css" href="../styles.css" />
+        <link rel="stylesheet" type="text/css" href="/static/styles.css" />
         <title>数据流通平台-待审批申请</title>
         <script>
             var BASE_PORT = "{{.Port}}"
-            var BASE_URL = "http://62.234.49.75:" + BASE_PORT;
+            // var BASE_URL = ":" + BASE_PORT;
+            var BASE_URL = "";
         </script>
     </head>
     <body>
@@ -34,6 +35,6 @@
             <tbody></tbody>
         </table>
 
-        <script src="../toMe.js"></script>
+        <script src="/static/toMe.js"></script>
     </body>
 </html>

@@ -62,26 +62,31 @@ func (s *QuerySmartContract) CreateQuery(ctx contractapi.TransactionContextInter
 		ServiceID:      serviceID,
 		Timestamp:      timestamp,
 	}
-	queryJSON, err := json.Marshal(query)
+	queryBytes, err := json.Marshal(query)
 	if err != nil {
 		return err
 	}
 
-	return ctx.GetStub().PutState(queryID, queryJSON)
+	err = ctx.GetStub().SetEvent("CreateQuery", queryBytes)
+	if err != nil {
+		return fmt.Errorf("failed to SetEvent CreateQuery: %v", err)
+	}
+
+	return ctx.GetStub().PutState(queryID, queryBytes)
 }
 
 // ReadQuery returns the query stored in the world state with given id.
 func (s *QuerySmartContract) ReadQuery(ctx contractapi.TransactionContextInterface, queryID string) (*Query, error) {
-	queryJSON, err := ctx.GetStub().GetState(queryID)
+	queryBytes, err := ctx.GetStub().GetState(queryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read from world state: %v", err)
 	}
-	if queryJSON == nil {
+	if queryBytes == nil {
 		return nil, fmt.Errorf("the query %s does not exist", queryID)
 	}
 
 	var query Query
-	err = json.Unmarshal(queryJSON, &query)
+	err = json.Unmarshal(queryBytes, &query)
 	if err != nil {
 		return nil, err
 	}
@@ -91,12 +96,12 @@ func (s *QuerySmartContract) ReadQuery(ctx contractapi.TransactionContextInterfa
 
 // QueryExists returns true when query with given ID exists in world state
 func (s *QuerySmartContract) QueryExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
-	queryJSON, err := ctx.GetStub().GetState(id)
+	queryBytes, err := ctx.GetStub().GetState(id)
 	if err != nil {
 		return false, fmt.Errorf("failed to read from world state: %v", err)
 	}
 
-	return queryJSON != nil, nil
+	return queryBytes != nil, nil
 }
 
 // GetAllQuerys returns all querys found in world state

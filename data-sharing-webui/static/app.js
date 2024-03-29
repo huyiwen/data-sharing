@@ -104,20 +104,20 @@ function addServiceRow(service, tableBody) {
   viewBtn.textContent = "View";
   viewBtn.className = "button-style";
   viewBtn.onclick = function () {
-    fetchData(service.ServiceID); // This assumes headers are part of the service object
-  };
-  row.insertCell(rows.indexOf("data")).appendChild(viewBtn);
-}
-
-function fetchData(serviceID) {
-  fetch(BASE_URL + "/fetch_data", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ serviceID: serviceID }), // Removed headers as per the updated spec
-  })
+    // fetch_data 
+    const data = {
+      ServiceID : service.ServiceID,
+      PublisherURL: service.PublisherURL
+    }
+    fetch(BASE_URL + "/fetch_data", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    })
     .then((response) => {
+      console.log(response)
       if (!response.ok) {
         throw new Error("Network response was not ok " + response.statusText);
       }
@@ -129,6 +129,42 @@ function fetchData(serviceID) {
     .catch((error) => {
       console.error("Error fetching data:", error);
     });
+};
+  row.insertCell(rows.indexOf("data")).appendChild(viewBtn);
+}
+
+function createTable(data) {
+  const table = document.createElement("table");
+  table.className = "data-table"; // Apply CSS styling as needed
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+
+  console.log("datatype:", typeof(data))
+
+  // 创建表头
+  const headerRow = document.createElement("tr");
+  for (const key in data[0]) {
+    const th = document.createElement("th");
+    th.textContent = key;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+
+  // 创建表格内容
+  for (const item of data) {
+    const row = document.createElement("tr");
+    for (const key in item) {
+      const td = document.createElement("td");
+      td.textContent = item[key];
+      row.appendChild(td);
+    }
+    tbody.appendChild(row);
+  }
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+
+  return table;
 }
 
 function displayDataModal(responseData) {
@@ -154,26 +190,10 @@ function displayDataModal(responseData) {
   };
   modalContent.appendChild(closeBtn);
 
-  // Create a table element
-  const table = document.createElement("table");
-  table.className = "data-table"; // Apply CSS styling as needed
-
-  // Create the header row
-  const headerRow = table.insertRow();
-  responseData.column_names.forEach((columnName) => {
-    const headerCell = document.createElement("th");
-    headerCell.textContent = columnName;
-    headerRow.appendChild(headerCell);
-  });
-
-  // Create the data rows
-  responseData.data.forEach((dataRow) => {
-    const row = table.insertRow();
-    dataRow.forEach((cellData) => {
-      const cell = row.insertCell();
-      cell.textContent = cellData;
-    });
-  });
+  console.log("data:", (responseData))
+ 
+  const resdata = JSON.parse(responseData.data)
+  table = createTable(resdata);
 
   modalContent.appendChild(table);
   document.body.appendChild(modal);
@@ -198,64 +218,64 @@ function appendNewServiceRow(newService) {
   addServiceRow(newService, tableBody);
 }
 
-function approveService(serviceID, buyerID, headers, expiretime, button) {
-  // 示例加密TOKEN
-  const encryptedToken = "sampleEncryptedToken";
+// function approveService(serviceID, buyerID, headers, expiretime, button) {
+//   // 示例加密TOKEN
+//   const encryptedToken = "sampleEncryptedToken";
 
-  // 构建POST请求的数据
-  const postData = {
-    applicationID: serviceID, // 此处假设serviceID即为applicationID
-    buyerID: buyerID,
-    headers: headers,
-    expiretime: expiretime,
-    approval: true,
-  };
+//   // 构建POST请求的数据
+//   const postData = {
+//     applicationID: serviceID, // 此处假设serviceID即为applicationID
+//     buyerID: buyerID,
+//     headers: headers,
+//     expiretime: expiretime,
+//     approval: true,
+//   };
 
-  // 发送POST请求
-  fetch(BASE_URL + "/approve_application", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(postData),
-  })
-    .then((response) => {
-      if (response.status === 200) {
-        return response.json();
-      } else {
-        alert("Approval failed with status: " + response.status);
-      }
-    })
-    .then(() => {
-      alert("Approval successful!");
+//   // 发送POST请求
+//   fetch(BASE_URL + "/approve_application", {
+//     method: "POST",
+//     headers: {
+//       "Content-Type": "application/json",
+//     },
+//     body: JSON.stringify(postData),
+//   })
+//     .then((response) => {
+//       if (response.status === 200) {
+//         return response.json();
+//       } else {
+//         alert("Approval failed with status: " + response.status);
+//       }
+//     })
+//     .then(() => {
+//       alert("Approval successful!");
 
-      // 更新按钮文本或移除按钮
-      button.textContent = "Approved"; // 更改按钮文本
-      button.disabled = true; // 禁用按钮
-      button.classList.remove("button-style");
-      button.classList.add("button-disabled");
-    })
-    .catch((error) => {
-      console.error("Error:", error);
-      alert("Approval process encountered an error.");
-    });
-}
+//       // 更新按钮文本或移除按钮
+//       button.textContent = "Approved"; // 更改按钮文本
+//       button.disabled = true; // 禁用按钮
+//       button.classList.remove("button-style");
+//       button.classList.add("button-disabled");
+//     })
+//     .catch((error) => {
+//       console.error("Error:", error);
+//       alert("Approval process encountered an error.");
+//     });
+// }
 
-function approve(serviceID) {
-  const buyerID = "someBuyerID";
-  const headers = ["Header1", "Header2"];
-  const expiretime = new Date().toISOString();
+// function approve(serviceID) {
+//   const buyerID = "someBuyerID";
+//   const headers = ["Header1", "Header2"];
+//   const expiretime = new Date().toISOString();
 
-  // 获取当前的approve按钮
-  const approveBtn = document.querySelector(
-    `button[data-service-id="${serviceID}"]`,
-  );
+//   // 获取当前的approve按钮
+//   const approveBtn = document.querySelector(
+//     `button[data-service-id="${serviceID}"]`,
+//   );
 
-  // 调用approveService时，传入当前的按钮
-  approveService(serviceID, buyerID, headers, expiretime, approveBtn);
+//   // 调用approveService时，传入当前的按钮
+//   approveService(serviceID, buyerID, headers, expiretime, approveBtn);
 
-  console.log(`Approved service with ID: ${serviceID}`);
-}
+//   console.log(`Approved service with ID: ${serviceID}`);
+// }
 
 function displayServices(services) {
   var serviceList = document.getElementById("serviceList");

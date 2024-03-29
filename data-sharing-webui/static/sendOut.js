@@ -70,38 +70,30 @@ function addApplicationRow(application, tableBody) {
         },
         body: JSON.stringify(data),
       })
-      // .then((response) => {
-      //   if (!response.ok) {
-      //     throw new Error("Network response was not ok " + response.statusText);
-      //   }
-      //   return response.json();
-      // })
-      // .then((data) => {
-      //   displayDataModal(data);
-      // })
-      // .catch((error) => {
-      //   console.error("Error fetching data:", error);
-      // });
-      .then((response) => response.json())
+      .then((response) => {
+        console.log(response)
+        if (!response.ok) {
+          throw new Error("Network response was not ok " + response.statusText);
+        }
+        return response.json();
+      })
       .then((data) => {
-        const table = createTable(data);
-        const popup = document.getElementById("popup");
-        popup.innerHTML = "";
-        popup.appendChild(closeButton); // 将关闭按钮添加到弹窗中
-        popup.appendChild(table);
-        popup.style.display = "block";
+        displayDataModal(data);
+      })
+      .catch((error) => {
+        console.error("Error fetching data:", error);
       });
+      // .then((response) => response.json())
+      // .then((data) => {
+      //   const table = createTable(data);
+      //   const popup = document.getElementById("popup");
+      //   popup.innerHTML = "";
+      //   popup.appendChild(closeButton); // 将关闭按钮添加到弹窗中
+      //   popup.appendChild(table);
+      //   popup.style.display = "block";
+      // });
   };
   row.insertCell(rows.indexOf("Operation")).appendChild(viewBtn);
-
-  // disable btn
-  // if (application.Status != 1) {
-  //     // can only view data when approved
-  //     viewBtn.disabled = true;
-  //     viewBtn.classList.remove("button-style");
-  //     viewBtn.classList.add("button-disabled");
-  // }
-
 }
 
 function populateTable(applications) {
@@ -116,8 +108,11 @@ function populateTable(applications) {
 
 function createTable(data) {
   const table = document.createElement("table");
+  table.className = "data-table"; // Apply CSS styling as needed
   const thead = document.createElement("thead");
   const tbody = document.createElement("tbody");
+
+  console.log("datatype:", typeof(data))
 
   // 创建表头
   const headerRow = document.createElement("tr");
@@ -168,26 +163,10 @@ function displayDataModal(responseData) {
   };
   modalContent.appendChild(closeBtn);
 
-  // Create a table element
-  const table = document.createElement("table");
-  table.className = "data-table"; // Apply CSS styling as needed
-
-  // Create the header row
-  const headerRow = table.insertRow();
-  responseData.column_names.forEach((columnName) => {
-    const headerCell = document.createElement("th");
-    headerCell.textContent = columnName;
-    headerRow.appendChild(headerCell);
-  });
-
-  // Create the data rows
-  responseData.data.forEach((dataRow) => {
-    const row = table.insertRow();
-    dataRow.forEach((cellData) => {
-      const cell = row.insertCell();
-      cell.textContent = cellData;
-    });
-  });
+  console.log("data:", (responseData))
+ 
+  const resdata = JSON.parse(responseData.data)
+  table = createTable(resdata);
 
   modalContent.appendChild(table);
   document.body.appendChild(modal);

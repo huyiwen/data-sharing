@@ -3,11 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="stylesheet" type="text/css" href="../styles.css" />
+        <link rel="stylesheet" type="text/css" href="/static/styles.css" />
         <title>数据流通平台-我的申请</title>
         <script>
             var BASE_PORT = "{{.Port}}"
-            var BASE_URL = "http://62.234.49.75:" + BASE_PORT;
+            // var BASE_URL = ":" + BASE_PORT;
+            var BASE_URL = "";
             console.log(BASE_URL);
         </script>
     </head>
@@ -37,6 +38,6 @@
             <tbody></tbody>
         </table>
 
-        <script src="../sendOut.js"></script>
+        <script src="/static/sendOut.js"></script>
     </body>
 </html>

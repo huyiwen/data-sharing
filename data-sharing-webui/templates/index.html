@@ -3,11 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="stylesheet" type="text/css" href="../styles.css" />
+        <link rel="stylesheet" type="text/css" href="/static/styles.css" />
         <title>数据流通平台-首页</title>
         <script>
             var BASE_PORT = "{{.Port}}"
-            var BASE_URL = "http://62.234.49.75:" + BASE_PORT;
+            // var BASE_URL = "http://127.0.0.1:" + BASE_PORT;
+            var BASE_URL = "";
         </script>
     </head>
     <body>
@@ -65,7 +66,7 @@
                         rows="1"
                         placeholder="Headers"
                     ></textarea
-                    ><br /> 
+                    ><br />
                     <label for="sellerPublicKey">Seller Public Key:</label>
                     <input
                         type="text"
@@ -84,7 +85,7 @@
             </div>
         </div>
 
-        <script src="../app.js"></script>
+        <script src="/static/app.js"></script>
         <!-- <script>
             document.getElementById('testHTTPButton').addEventListener('click',testHTTP);
         </script> -->

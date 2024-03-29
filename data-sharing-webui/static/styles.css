@@ -51,6 +51,8 @@ li a:hover {
     border-bottom: 1px solid #ddd;
     padding: 11px;
     text-align: left;
+    max-width: 15vw;
+    overflow: scroll;
 }
 
 #servicesTable th:first-child, #servicesTable td:first-child, #applicationTable th:first-child, #applicationTable td:first-child {

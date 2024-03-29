@@ -36,7 +36,7 @@ func _readNFT(ctx contractapi.TransactionContextInterface, tokenId string) (*Nft
 	nft := new(Nft)
 	err = json.Unmarshal(nftBytes, nft)
 	if err != nil {
-		return nil, fmt.Errorf("failed to Unmarshal nftBytes: %v", err)
+		return nil, fmt.Errorf("failed to Unmarshal nftBytes (%s %s): %v", nftKey, nftBytes, err)
 	}
 
 	return nft, nil
