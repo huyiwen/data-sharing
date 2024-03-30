@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
@@ -129,16 +130,10 @@ func (c *TokenERC721Contract) Approve(ctx contractapi.TransactionContextInterfac
 		return false, fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
 	}
 
-	sender64, err := ctx.GetClientIdentity().GetID()
+	sender, err := GetClientIdentity(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to GetClientIdentity: %v", err)
 	}
-
-	senderBytes, err := base64.StdEncoding.DecodeString(sender64)
-	if err != nil {
-		return false, fmt.Errorf("failed to DecodeString senderBytes: %v", err)
-	}
-	sender := string(senderBytes)
 
 	nft, err := _readNFT(ctx, tokenId)
 	if err != nil {
@@ -176,6 +171,21 @@ func (c *TokenERC721Contract) Approve(ctx contractapi.TransactionContextInterfac
 	return true, nil
 }
 
+func GetClientIdentity(ctx contractapi.TransactionContextInterface) (string, error) {
+	owner64, err := ctx.GetClientIdentity().GetID()
+	if err != nil {
+		return "", fmt.Errorf("failed to GetClientIdentity owner64: %v", err)
+	}
+
+	ownerBytes, err := base64.StdEncoding.DecodeString(owner64)
+	if err != nil {
+		return "", fmt.Errorf("failed to DecodeString owner64: %v", err)
+	}
+	owner := string(ownerBytes)
+	owner = strings.ReplaceAll(owner, " ", "")
+	return owner, nil
+}
+
 // SetApprovalForAll enables or disables approval for a third party ("operator")
 // to manage all the message sender's assets
 // param {String} operator A client to add to the set of authorized operators
@@ -192,16 +202,10 @@ func (c *TokenERC721Contract) SetApprovalForAll(ctx contractapi.TransactionConte
 		return false, fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
 	}
 
-	sender64, err := ctx.GetClientIdentity().GetID()
+	sender, err := GetClientIdentity(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to GetClientIdentity: %v", err)
 	}
-
-	senderBytes, err := base64.StdEncoding.DecodeString(sender64)
-	if err != nil {
-		return false, fmt.Errorf("failed to DecodeString sender: %v", err)
-	}
-	sender := string(senderBytes)
 
 	nftApproval := new(Approval)
 	nftApproval.Owner = sender
@@ -310,16 +314,10 @@ func (c *TokenERC721Contract) TransferFrom(ctx contractapi.TransactionContextInt
 	}
 
 	// Get ID of submitting client identity
-	sender64, err := ctx.GetClientIdentity().GetID()
+	sender, err := GetClientIdentity(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to GetClientIdentity: %v", err)
 	}
-
-	senderBytes, err := base64.StdEncoding.DecodeString(sender64)
-	if err != nil {
-		return false, fmt.Errorf("failed to DecodeString sender: %v", err)
-	}
-	sender := string(senderBytes)
 
 	nft, err := _readNFT(ctx, tokenId)
 	if err != nil {
@@ -515,8 +513,7 @@ func (c *TokenERC721Contract) TotalSupply(ctx contractapi.TransactionContextInte
 
 func (c *TokenERC721Contract) Initialize(ctx contractapi.TransactionContextInterface, name string, symbol string, ownerMSPID string) (bool, error) {
 	// Check minter authorization
-	clientIdentity := ctx.GetClientIdentity()
-	clientMSPID, err := clientIdentity.GetMSPID()
+	clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
 	if err != nil {
 		return false, fmt.Errorf("failed to get clientMSPID: %v", err)
 	}
@@ -599,16 +596,10 @@ func (c *TokenERC721Contract) MintWithTokenURI(ctx contractapi.TransactionContex
 	}
 
 	// Get ID of submitting client identity
-	minter64, err := ctx.GetClientIdentity().GetID()
+	minter, err := GetClientIdentity(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get minter id: %v", err)
+		return nil, fmt.Errorf("failed to GetClientIdentity: %v", err)
 	}
-
-	minterBytes, err := base64.StdEncoding.DecodeString(minter64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to DecodeString minter64: %v", err)
-	}
-	minter := string(minterBytes)
 
 	// Check if the token to be minted does not exist
 	exists := _nftExists(ctx, tokenId)
@@ -684,16 +675,10 @@ func (c *TokenERC721Contract) Burn(ctx contractapi.TransactionContextInterface, 
 		return false, fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
 	}
 
-	owner64, err := ctx.GetClientIdentity().GetID()
+	owner, err := GetClientIdentity(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to GetClientIdentity owner64: %v", err)
 	}
-
-	ownerBytes, err := base64.StdEncoding.DecodeString(owner64)
-	if err != nil {
-		return false, fmt.Errorf("failed to DecodeString owner64: %v", err)
-	}
-	owner := string(ownerBytes)
 
 	// Check if a caller is the owner of the non-fungible token
 	nft, err := _readNFT(ctx, tokenId)
@@ -759,17 +744,10 @@ func (c *TokenERC721Contract) ClientAccountBalance(ctx contractapi.TransactionCo
 	}
 
 	// Get ID of submitting client identity
-	clientAccountID64, err := ctx.GetClientIdentity().GetID()
+	clientAccountID, err := GetClientIdentity(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("failed to GetClientIdentity minter: %v", err)
+		return 0, fmt.Errorf("failed to GetClientIdentity: %v", err)
 	}
-
-	clientAccountIDBytes, err := base64.StdEncoding.DecodeString(clientAccountID64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to DecodeString sender: %v", err)
-	}
-
-	clientAccountID := string(clientAccountIDBytes)
 
 	return c.BalanceOf(ctx, clientAccountID), nil
 }
@@ -790,16 +768,10 @@ func (c *TokenERC721Contract) ClientAccountID(ctx contractapi.TransactionContext
 	}
 
 	// Get ID of submitting client identity
-	clientAccountID64, err := ctx.GetClientIdentity().GetID()
+	clientAccount, err := GetClientIdentity(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to GetClientIdentity minter: %v", err)
+		return "", fmt.Errorf("failed to GetClientIdentity: %v", err)
 	}
-
-	clientAccountBytes, err := base64.StdEncoding.DecodeString(clientAccountID64)
-	if err != nil {
-		return "", fmt.Errorf("failed to DecodeString clientAccount64: %v", err)
-	}
-	clientAccount := string(clientAccountBytes)
 
 	return clientAccount, nil
 }
