@@ -16,7 +16,7 @@ const approvalPrefix = "approval"
 // Define key names for options
 const nameKey = "name"
 const symbolKey = "symbol"
-const ownerKey = "owner"
+const ownerMSPIDKey = "ownerMSPID"
 
 // TokenERC721Contract contract for managing CRUD operations
 type TokenERC721Contract struct {
@@ -515,7 +515,8 @@ func (c *TokenERC721Contract) TotalSupply(ctx contractapi.TransactionContextInte
 
 func (c *TokenERC721Contract) Initialize(ctx contractapi.TransactionContextInterface, name string, symbol string, ownerMSPID string) (bool, error) {
 	// Check minter authorization
-	clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
+	clientIdentity := ctx.GetClientIdentity()
+	clientMSPID, err := clientIdentity.GetMSPID()
 	if err != nil {
 		return false, fmt.Errorf("failed to get clientMSPID: %v", err)
 	}
@@ -541,15 +542,15 @@ func (c *TokenERC721Contract) Initialize(ctx contractapi.TransactionContextInter
 		return false, fmt.Errorf("failed to PutState symbolKey %s: %v", symbolKey, err)
 	}
 
-	err = ctx.GetStub().PutState(ownerKey, []byte(ownerMSPID))
+	err = ctx.GetStub().PutState(ownerMSPIDKey, []byte(clientMSPID))
 	if err != nil {
-		return false, fmt.Errorf("failed to PutState ownerKey %s: %v", ownerKey, err)
+		return false, fmt.Errorf("failed to PutState ownerMSPIDKey %s: %v", ownerMSPIDKey, err)
 	}
 
 	return true, nil
 }
 
-func (c *TokenERC721Contract) Owner(ctx contractapi.TransactionContextInterface) (string, error) {
+func (c *TokenERC721Contract) OwnerMSPID(ctx contractapi.TransactionContextInterface) (string, error) {
 
 	// Check if contract has been intilized first
 	initialized, err := checkInitialized(ctx)
@@ -560,9 +561,9 @@ func (c *TokenERC721Contract) Owner(ctx contractapi.TransactionContextInterface)
 		return "", fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
 	}
 
-	bytes, err := ctx.GetStub().GetState(ownerKey)
+	bytes, err := ctx.GetStub().GetState(ownerMSPIDKey)
 	if err != nil {
-		return "", fmt.Errorf("failed to get Owner: %v", err)
+		return "", fmt.Errorf("failed to get Owner MSPID: %v", err)
 	}
 	return string(bytes), nil
 }
@@ -589,7 +590,7 @@ func (c *TokenERC721Contract) MintWithTokenURI(ctx contractapi.TransactionContex
 		return nil, fmt.Errorf("failed to get clientMSPID: %v", err)
 	}
 
-	ownerMSPID, err := c.Owner(ctx)
+	ownerMSPID, err := c.OwnerMSPID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ownerMSPID: %v", err)
 	}
