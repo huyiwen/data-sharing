@@ -67,7 +67,7 @@ func (s *QuerySmartContract) CreateQuery(ctx contractapi.TransactionContextInter
 		return err
 	}
 
-	err = ctx.GetStub().SetEvent("CreateQuery", queryBytes)
+	err = ctx.GetStub().SetEvent("Query", queryBytes)
 	if err != nil {
 		return fmt.Errorf("failed to SetEvent CreateQuery: %v", err)
 	}
