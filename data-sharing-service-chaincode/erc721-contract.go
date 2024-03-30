@@ -16,6 +16,7 @@ const approvalPrefix = "approval"
 // Define key names for options
 const nameKey = "name"
 const symbolKey = "symbol"
+const ownerKey = "owner"
 
 // TokenERC721Contract contract for managing CRUD operations
 type TokenERC721Contract struct {
@@ -512,13 +513,13 @@ func (c *TokenERC721Contract) TotalSupply(ctx contractapi.TransactionContextInte
 // param {String} name The name of the token
 // param {String} symbol The symbol of the token
 
-func (c *TokenERC721Contract) Initialize(ctx contractapi.TransactionContextInterface, name string, symbol string) (bool, error) {
-	// Check minter authorization - this sample assumes Org1 is the issuer with privilege to set the name and symbol
+func (c *TokenERC721Contract) Initialize(ctx contractapi.TransactionContextInterface, name string, symbol string, ownerMSPID string) (bool, error) {
+	// Check minter authorization
 	clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
 	if err != nil {
 		return false, fmt.Errorf("failed to get clientMSPID: %v", err)
 	}
-	if clientMSPID != "Org1MSP" {
+	if clientMSPID != ownerMSPID {
 		return false, fmt.Errorf("client is not authorized to set the name and symbol of the token")
 	}
 
@@ -540,7 +541,30 @@ func (c *TokenERC721Contract) Initialize(ctx contractapi.TransactionContextInter
 		return false, fmt.Errorf("failed to PutState symbolKey %s: %v", symbolKey, err)
 	}
 
+	err = ctx.GetStub().PutState(ownerKey, []byte(ownerMSPID))
+	if err != nil {
+		return false, fmt.Errorf("failed to PutState ownerKey %s: %v", ownerKey, err)
+	}
+
 	return true, nil
+}
+
+func (c *TokenERC721Contract) Owner(ctx contractapi.TransactionContextInterface) (string, error) {
+
+	// Check if contract has been intilized first
+	initialized, err := checkInitialized(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if contract is already initialized: %v", err)
+	}
+	if !initialized {
+		return "", fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
+	}
+
+	bytes, err := ctx.GetStub().GetState(ownerKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to get Owner: %v", err)
+	}
+	return string(bytes), nil
 }
 
 // Mint a new non-fungible token
@@ -559,13 +583,17 @@ func (c *TokenERC721Contract) MintWithTokenURI(ctx contractapi.TransactionContex
 		return nil, fmt.Errorf("Contract options need to be set before calling any function, call Initialize() to initialize contract")
 	}
 
-	// Check minter authorization - this sample assumes Org1 is the issuer with privilege to mint a new token
+	// Check minter authorization
 	clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get clientMSPID: %v", err)
 	}
 
-	if clientMSPID != "Org1MSP" {
+	ownerMSPID, err := c.Owner(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ownerMSPID: %v", err)
+	}
+	if clientMSPID != ownerMSPID {
 		return nil, fmt.Errorf("client is not authorized to set the name and symbol of the token")
 	}
 
